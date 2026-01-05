@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/glass_panel"
+    android:padding="25dp"
+    android:layout_gravity="center">
+
+    <TextView
+        android:text="SYSTEM SETTINGS"
+        android:textSize="20sp"
+        android:textColor="#00FF00"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:gravity="center"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="25dp"/>
+
+    <Switch
+        android:id="@+id/swSound"
+        android:text="Sound Effects"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="15dp"/>
+
+    <Switch
+        android:id="@+id/swVib"
+        android:text="Haptic Vibrate"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="15dp"/>
+
+    <Switch
+        android:id="@+id/swTheme"
+        android:text="Dark Mode"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="25dp"/>
+
+    <Button
+        android:id="@+id/btnCloseSettings"
+        android:text="DONE"
+        android:textColor="#000000"
+        android:backgroundTint="#00FF00"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+</LinearLayout>

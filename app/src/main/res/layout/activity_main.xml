@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootView"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <LinearLayout
+        android:id="@+id/mainLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:weightSum="10">
+
+        <RelativeLayout
+            android:id="@+id/headerBox"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1.2"
+            android:background="#1E1E1E">
+
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_settings"
+                android:background="@android:color/transparent"
+                android:scaleType="fitCenter"
+                android:padding="5dp"
+                android:layout_alignParentStart="true"
+                android:layout_alignParentTop="true"
+                android:layout_marginTop="12dp"
+                android:layout_marginStart="12dp"
+                android:contentDescription="Settings" />
+
+            <TextView
+                android:id="@+id/projectName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SHEET 1"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:layout_alignTop="@id/btnSettings"
+                android:layout_alignParentEnd="true"
+                android:layout_marginEnd="15dp"
+                android:layout_marginTop="8dp"/>
+
+            <TextView
+                android:id="@+id/grandTotalText"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:text="₹0"
+                android:gravity="end|center_vertical"
+                android:textColor="#00FF00"
+                android:textSize="50sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:paddingEnd="20dp"
+                android:paddingTop="15dp"/>
+        </RelativeLayout>
+
+        <TextView
+            android:id="@+id/inputDisplay"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="0.8"
+            android:text="0"
+            android:gravity="end|center_vertical"
+            android:textColor="#00FFFF"
+            android:textSize="35sp"
+            android:paddingEnd="20dp"
+            android:fontFamily="monospace"
+            android:background="#2C2C2C"
+            android:singleLine="true"
+            android:scrollHorizontally="true"
+            android:ellipsize="none"
+            android:layout_marginBottom="4dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="2.5"
+            android:orientation="horizontal"
+            android:background="@drawable/rounded_bg"
+            android:clipToOutline="true"
+            android:layout_margin="10dp">
+
+            <ListView
+                android:id="@+id/historyList"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:divider="#222222"
+                android:dividerHeight="1dp"
+                android:padding="5dp"
+                android:scrollbars="none"/>
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="match_parent"
+                android:background="#333333" />
+
+            <ListView
+                android:id="@+id/summaryList"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:divider="#222222"
+                android:dividerHeight="1dp"
+                android:padding="5dp"
+                android:scrollbars="none"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="5.5"
+            android:orientation="horizontal"
+            android:background="@drawable/keypad_bg"
+            android:layout_margin="5dp"
+            android:padding="5dp">
+
+            <GridLayout
+                android:id="@+id/keypadArea"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="3.2"
+                android:columnCount="4"
+                android:rowCount="5"
+                android:padding="2dp">
+
+                <Button android:text="AC" android:id="@+id/btnAC" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FF0055" style="@style/CyberKey"/>
+                <Button android:text="÷" android:id="@+id/btnDiv" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+                <Button android:text="×" android:id="@+id/btnMul" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+                <Button android:text="⌫" android:id="@+id/btnDel" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FF0055" style="@style/CyberKey"/>
+
+                <Button android:text="7" android:id="@+id/btn7" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="8" android:id="@+id/btn8" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="9" android:id="@+id/btn9" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="-" android:id="@+id/btnSub" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+
+                <Button android:text="4" android:id="@+id/btn4" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="5" android:id="@+id/btn5" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="6" android:id="@+id/btn6" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="+" android:id="@+id/btnAdd" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+
+                <Button android:text="1" android:id="@+id/btn1" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="2" android:id="@+id/btn2" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="3" android:id="@+id/btn3" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+
+                <Button
+                    android:id="@+id/btnEqual"
+                    android:text="="
+                    android:textSize="24sp"
+                    android:background="@drawable/btn_spb"
+                    app:backgroundTint="@null"
+                    android:textColor="#00FF00"
+                    android:layout_rowSpan="2"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="2"
+                    style="@style/CyberKey"/>
+
+                <Button android:text="0" android:id="@+id/btn0" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:layout_columnSpan="2" android:layout_gravity="fill" style="@style/CyberKey"/>
+                <Button android:text="." android:id="@+id/btnDot" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+            </GridLayout>
+
+            <ScrollView
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="2dp">
+
+                    <Button android:id="@+id/catFood" android:text="🍔\nFOOD" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catRent" android:text="🏠\nRENT" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catTravel" android:text="🚕\nTRAVEL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catFuel" android:text="⛽\nFUEL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catShop" android:text="🛍️\nSHOPPING" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catMed" android:text="💊\nHEALTH" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catGrocery" android:text="🛒\nGROCERY" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catGym" android:text="💪\nGYM" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catWifi" android:text="🛜\nWIFI" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catPower" android:text="⚡\nELECTRICITY" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catCable" android:text="📺\nCABLE TV" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catWater" android:text="💧\nWATER" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catRefresh" android:text="🍺\nDRINKS" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catSchool" android:text="🏫\nSCHOOL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catTuition" android:text="📚\nTUITION" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/catHelp" android:text="👨 🧹\nHOUSEHELP" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+
+                    <Button android:id="@+id/btnPrint" android:text="PRINT" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFFFF" style="@style/IconBtn"/>
+                </LinearLayout>
+            </ScrollView>
+        </LinearLayout>
+    </LinearLayout>
+
+    <RelativeLayout
+        android:id="@+id/sheetOverlayContainer"
+        android:layout_width="320dp"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:background="@drawable/glass_panel"
+        android:visibility="gone"
+        android:elevation="30dp"
+        android:padding="10dp">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_centerInParent="true"
+            android:background="@drawable/sheet_highlight" />
+
+        <TextView
+            android:id="@+id/sheetOverlayText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:text="SHEET 1\nSHEET 2\nSHEET 3"
+            android:textSize="22sp"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:lineSpacingExtra="12dp"/>
+    </RelativeLayout>
+
+</RelativeLayout>
