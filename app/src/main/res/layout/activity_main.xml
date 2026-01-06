@@ -114,15 +114,14 @@
                 android:layout_height="match_parent"
                 android:background="#333333" />
 
-            <ListView
+            <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/summaryList"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:divider="#222222"
-                android:dividerHeight="1dp"
+                android:background="#1500FF00"
                 android:padding="5dp"
-                android:scrollbars="none"/>
+                android:scrollbars="vertical"/>
         </LinearLayout>
 
         <LinearLayout
@@ -213,10 +212,9 @@
                     <Button android:id="@+id/catRefresh" android:text="🍺\nDRINKS" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
                     <Button android:id="@+id/catSchool" android:text="🏫\nSCHOOL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
                     <Button android:id="@+id/catTuition" android:text="📚\nTUITION" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catHelp" android:text="👩\nMAID" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
 
-                    <Button android:id="@+id/btnPrint" android:text="PRINT" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/btnShare" android:text="SHARE" android:drawableTop="@android:drawable/ic_menu_share" android:drawableTint="@android:color/white" android:padding="8dp" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFFFF" style="@style/IconBtn"/>
                 </LinearLayout>
             </ScrollView>
         </LinearLayout>

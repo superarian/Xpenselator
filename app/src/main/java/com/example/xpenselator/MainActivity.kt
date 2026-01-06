@@ -81,10 +81,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var topd: TextView
     private lateinit var secd: TextView
 
-    // CHANGED TO RECYCLER VIEW
+    // RECYCLER VIEWS
     private lateinit var hisd: RecyclerView
+    private lateinit var summaryRecycler: RecyclerView
 
-    private lateinit var summaryView: ListView
     private lateinit var projectName: TextView
     private lateinit var overlayContainer: RelativeLayout
     private lateinit var overlayText: TextView
@@ -97,7 +97,7 @@ class MainActivity : AppCompatActivity() {
 
     // ADAPTERS
     private lateinit var expenseAdapter: ExpenseAdapter
-    private lateinit var summaryAdapter: ArrayAdapter<String>
+    private lateinit var summaryAdapter: SummaryAdapter
     private lateinit var fullHistoryAdapter: ArrayAdapter<String>
 
     private val toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
@@ -116,24 +116,41 @@ class MainActivity : AppCompatActivity() {
         topd = findViewById(R.id.grandTotalText)
         secd = findViewById(R.id.inputDisplay)
 
-        // RECYCLER VIEW SETUP
+        // 1. LEFT PANEL RECYCLER (Transactions)
         hisd = findViewById(R.id.historyList)
         hisd.layoutManager = LinearLayoutManager(this)
         expenseAdapter = ExpenseAdapter(expenseList)
         hisd.adapter = expenseAdapter
 
-        // SWIPE TO DELETE LOGIC
-        val swipeHandler = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
+        // Left Swipe Logic (Delete Single Item)
+        val leftSwipe = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
+            override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
+                deleteItem(viewHolder.adapterPosition)
+            }
+        }
+        ItemTouchHelper(leftSwipe).attachToRecyclerView(hisd)
+
+        // 2. RIGHT PANEL RECYCLER (Summary)
+        summaryRecycler = findViewById(R.id.summaryList)
+        summaryRecycler.layoutManager = LinearLayoutManager(this)
+        summaryAdapter = SummaryAdapter(summaryList)
+        summaryRecycler.adapter = summaryAdapter
+
+        // Right Swipe Logic (Delete Category)
+        val rightSwipe = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
             override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 val pos = viewHolder.adapterPosition
-                deleteItem(pos)
+                if(pos < summaryList.size) {
+                    val summaryItem = summaryList[pos]
+                    val catName = summaryItem.split(":")[0].trim()
+                    deleteCategory(catName)
+                }
             }
         }
-        val itemTouchHelper = ItemTouchHelper(swipeHandler)
-        itemTouchHelper.attachToRecyclerView(hisd)
+        ItemTouchHelper(rightSwipe).attachToRecyclerView(summaryRecycler)
 
-        summaryView = findViewById(R.id.summaryList)
         projectName = findViewById(R.id.projectName)
         overlayContainer = findViewById(R.id.sheetOverlayContainer)
         overlayText = findViewById(R.id.sheetOverlayText)
@@ -144,8 +161,6 @@ class MainActivity : AppCompatActivity() {
         chartContainer = findViewById(R.id.chartContainer)
         btnCloseChart = findViewById(R.id.btnCloseChart)
 
-        summaryAdapter = ArrayAdapter(this, R.layout.list_item, summaryList)
-        summaryView.adapter = summaryAdapter
         fullHistoryAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, expenseList)
         fullHistoryList.adapter = fullHistoryAdapter
 
@@ -177,19 +192,30 @@ class MainActivity : AppCompatActivity() {
         setupACButtonTouch()
     }
 
-    // --- RECYCLER VIEW ADAPTER CLASS ---
+    // --- RECYCLER VIEW ADAPTERS ---
     inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() {
-        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-            val textView: TextView = view.findViewById(android.R.id.text1)
-        }
+        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            val view = layoutInflater.inflate(android.R.layout.simple_list_item_1, parent, false)
-            return ViewHolder(view)
+            return ViewHolder(layoutInflater.inflate(android.R.layout.simple_list_item_1, parent, false))
         }
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             holder.textView.text = data[position]
-            holder.textView.setTextColor(Color.WHITE) // Force White Text
+            holder.textView.setTextColor(Color.WHITE)
             holder.textView.textSize = 14f
+        }
+        override fun getItemCount() = data.size
+    }
+
+    inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() {
+        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            return ViewHolder(layoutInflater.inflate(android.R.layout.simple_list_item_1, parent, false))
+        }
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            holder.textView.text = data[position]
+            holder.textView.setTextColor(Color.CYAN) // Cyan text for Summary
+            holder.textView.textSize = 14f
+            holder.textView.typeface = Typeface.MONOSPACE
         }
         override fun getItemCount() = data.size
     }
@@ -200,23 +226,18 @@ class MainActivity : AppCompatActivity() {
         topd.text = "₹${removeZero(grandTotal)}"
         expenseList.add("$emoji $name: ₹${removeZero(priceVal)}")
 
-        // Update Adapters
-        expenseAdapter.notifyDataSetChanged() // RecyclerView
-        fullHistoryAdapter.notifyDataSetChanged() // History
+        expenseAdapter.notifyDataSetChanged()
+        fullHistoryAdapter.notifyDataSetChanged()
 
         calculateCategoryTotals()
         saveSheetData(currentSheetID)
 
-        // Scroll to bottom
-        if (expenseList.isNotEmpty()) {
-            hisd.smoothScrollToPosition(expenseList.size - 1)
-        }
-
+        if (expenseList.isNotEmpty()) { hisd.smoothScrollToPosition(expenseList.size - 1) }
         secd.text = "Saved!"
         isNewEntry = true
     }
 
-    // --- DELETE ITEM LOGIC ---
+    // --- DELETE ITEM LOGIC (LEFT PANEL) ---
     private fun deleteItem(pos: Int) {
         performHaptic()
         val item = expenseList[pos]
@@ -235,8 +256,35 @@ class MainActivity : AppCompatActivity() {
         showFastToast("Deleted")
     }
 
+    // --- DELETE CATEGORY LOGIC (RIGHT PANEL) ---
+    private fun deleteCategory(catName: String) {
+        performHaptic()
+        val iterator = expenseList.iterator()
+        var deletedAmount = 0.0
+
+        // Remove ALL items that contain this category name
+        while(iterator.hasNext()){
+            val item = iterator.next()
+            if(item.contains(catName)) {
+                val price = item.substringAfter("₹").toDoubleOrNull() ?: 0.0
+                deletedAmount += price
+                iterator.remove()
+            }
+        }
+
+        grandTotal -= deletedAmount
+        if(grandTotal < 0) grandTotal = 0.0
+        topd.text = "₹${removeZero(grandTotal)}"
+
+        expenseAdapter.notifyDataSetChanged()
+        fullHistoryAdapter.notifyDataSetChanged()
+        calculateCategoryTotals()
+        saveSheetData(currentSheetID)
+        showFastToast("Deleted All $catName")
+    }
+
     private fun setupCategoryButtons() {
-        // 1. CUSTOM BUTTON LOGIC
+        // CUSTOM BUTTON
         findViewById<Button>(R.id.catCustom).setOnClickListener {
             performHaptic()
             val rawPrice = secd.text.toString()
@@ -244,11 +292,9 @@ class MainActivity : AppCompatActivity() {
             val value = evaluateExpression(rawPrice)
             if (value == 0.0) return@setOnClickListener
 
-            // Show Dialog
             val input = EditText(this)
-            input.hint = "Item Name (e.g. Cinema)"
+            input.hint = "Item Name"
             input.setTextColor(Color.WHITE)
-
             val dialog = AlertDialog.Builder(this)
                 .setTitle("Custom Item")
                 .setView(input)
@@ -258,13 +304,10 @@ class MainActivity : AppCompatActivity() {
                     addExpenseItem(finalName, "📝", value)
                 }
                 .create()
-
-            // Fix dialog colors for dark theme consistency
             dialog.window?.setBackgroundDrawableResource(android.R.color.background_dark)
             dialog.show()
         }
 
-        // 2. STANDARD BUTTONS
         val cats = mapOf(
             R.id.catFood to Pair("Food", "🍔"), R.id.catRent to Pair("Rent", "🏠"),
             R.id.catTravel to Pair("Travel", "🚕"), R.id.catFuel to Pair("Fuel", "⛽"),
@@ -273,7 +316,7 @@ class MainActivity : AppCompatActivity() {
             R.id.catWifi to Pair("Wifi", "🛜"), R.id.catPower to Pair("Electricity", "⚡"),
             R.id.catCable to Pair("Cable", "📺"), R.id.catWater to Pair("Water", "💧"),
             R.id.catRefresh to Pair("Drinks", "🍺"), R.id.catSchool to Pair("School", "🏫"),
-            R.id.catTuition to Pair("Tuition", "📚"), R.id.catHelp to Pair("Maid", "👩") // CHANGED TO MAID
+            R.id.catTuition to Pair("Tuition", "📚"), R.id.catHelp to Pair("Maid", "👩")
         )
 
         for ((id, pair) in cats) {
@@ -290,7 +333,6 @@ class MainActivity : AppCompatActivity() {
                 if (rawExpression == "Saved!" || rawExpression.isEmpty()) return@setOnClickListener
                 val value = evaluateExpression(rawExpression)
                 if (value == 0.0) return@setOnClickListener
-
                 addExpenseItem(pair.first, pair.second, value)
             }
         }
@@ -333,7 +375,8 @@ class MainActivity : AppCompatActivity() {
             if (s.isNotEmpty() && s != "Saved!") { secd.text = s.dropLast(1)
                 if (secd.text.isEmpty()) secd.text = "0" }
         }
-        findViewById<Button>(R.id.btnPrint).setOnClickListener { sharePdfReport() }
+        // SHARE BUTTON
+        findViewById<Button>(R.id.btnShare).setOnClickListener { sharePdfReport() }
     }
 
     private fun sharePdfReport() {
@@ -342,14 +385,17 @@ class MainActivity : AppCompatActivity() {
         showFastToast("Generating PDF Report...")
         val pdfDocument = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
-        val paintText = Paint().apply { color = Color.BLACK; textSize = 14f; typeface = Typeface.MONOSPACE }
-        val paintHeader = Paint().apply { color = Color.BLACK; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-        val paintGreen = Paint().apply { color = Color.parseColor("#006400"); textSize = 18f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-        val paintLine = Paint().apply { color = Color.GRAY; strokeWidth = 1f }
+        val paintBg = Paint().apply { color = Color.parseColor("#121212"); style = Paint.Style.FILL }
+        val paintText = Paint().apply { color = Color.LTGRAY; textSize = 14f; typeface = Typeface.MONOSPACE }
+        val paintHeader = Paint().apply { color = Color.GREEN; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+        val paintGreen = Paint().apply { color = Color.CYAN; textSize = 18f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+        val paintLine = Paint().apply { color = Color.DKGRAY; strokeWidth = 1f }
 
         val itemsPerPage = 25; val totalItems = expenseList.size; var pageCount = 0
         for (i in 0 until totalItems step itemsPerPage) {
-            val page = pdfDocument.startPage(pageInfo); val canvas = page.canvas; var y = 60f
+            val page = pdfDocument.startPage(pageInfo); val canvas = page.canvas
+            canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
+            var y = 60f
             canvas.drawText("BYTESKULL FINANCE", 297f, y, paintHeader); y += 30f
             canvas.drawText("SHEET: ${getSheetName(currentSheetID)}", 297f, y, paintGreen); y += 40f
             canvas.drawLine(40f, y, 555f, y, paintLine); y += 30f
@@ -368,12 +414,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         var chartPage = pdfDocument.startPage(pageInfo); var canvas = chartPage.canvas; var y = 60f
+        canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
         canvas.drawText("CATEGORY BREAKDOWN", 297f, y, paintHeader); y += 60f
 
         val dataMap = HashMap<String, Float>()
         for(item in summaryList) {
-            val parts = item.split(":")
-            if(parts.size == 2) {
+            val parts = item.split(":"); if(parts.size == 2) {
                 val cleanName = parts[0].trim().filter { it.isLetter() }
                 val value = parts[1].replace("₹","").trim().toFloatOrNull() ?: 0f
                 if(value > 0) dataMap[cleanName] = value
@@ -383,23 +429,26 @@ class MainActivity : AppCompatActivity() {
         val maxVal = if(sortedData.isNotEmpty()) sortedData[0].second else 1f
         val chartColors = HorizontalBarChart(this, HashMap()).colors
         val barPaint = Paint(); val textWhite = Paint().apply { color = Color.WHITE; textSize = 14f; isFakeBoldText = true }
+        val textShadow = Paint().apply { color = Color.BLACK; textSize = 14f; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 3f }
 
         for((key, value) in sortedData) {
             if (y > 780f) {
                 pdfDocument.finishPage(chartPage)
-                chartPage = pdfDocument.startPage(pageInfo); canvas = chartPage.canvas; y = 60f
-                canvas.drawText("BREAKDOWN (Cont.)", 297f, y, paintHeader); y += 60f
+                chartPage = pdfDocument.startPage(pageInfo); canvas = chartPage.canvas
+                canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
+                y = 60f; canvas.drawText("BREAKDOWN (Cont.)", 297f, y, paintHeader); y += 60f
             }
             val barWidth = (value / maxVal) * 400f; val cleanWidth = max(barWidth, 10f)
             barPaint.color = chartColors[key] ?: Color.GRAY
             canvas.drawRect(50f, y, 50f + cleanWidth, y + 40f, barPaint)
             val label = "$key: ₹${value.toInt()}"
+            canvas.drawText(label, 60f, y + 26f, textShadow)
             canvas.drawText(label, 60f, y + 26f, textWhite)
             y += 50f
         }
         y += 20f
-        if (y > 780f) { pdfDocument.finishPage(chartPage); chartPage = pdfDocument.startPage(pageInfo); canvas = chartPage.canvas; y = 100f }
-        val totalPaint = Paint().apply { color = Color.BLACK; textSize = 30f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
+        if (y > 780f) { pdfDocument.finishPage(chartPage); chartPage = pdfDocument.startPage(pageInfo); canvas = chartPage.canvas; canvas.drawRect(0f, 0f, 595f, 842f, paintBg); y = 100f }
+        val totalPaint = Paint().apply { color = Color.WHITE; textSize = 30f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
         canvas.drawText("TOTAL: ₹${removeZero(grandTotal)}", 545f, y, totalPaint)
         pdfDocument.finishPage(chartPage)
 
