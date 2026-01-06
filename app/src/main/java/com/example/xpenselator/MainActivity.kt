@@ -48,7 +48,6 @@ import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
 
-    // --- VARIABLES ---
     private var isNewEntry = true
     private var grandTotal = 0.0
     private val expenseList = ArrayList<String>()
@@ -70,7 +69,6 @@ class MainActivity : AppCompatActivity() {
     private var isVibrationOn = true
     private var isDarkMode = true
 
-    // UI ELEMENTS
     private lateinit var mainLayout: LinearLayout
     private lateinit var headerBox: RelativeLayout
     private lateinit var btnSettings: ImageButton
@@ -81,14 +79,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var summaryView: ListView
     private lateinit var projectName: TextView
 
-    // OVERLAYS
     private lateinit var overlayContainer: RelativeLayout
     private lateinit var overlayText: TextView
     private lateinit var historyOverlay: RelativeLayout
     private lateinit var fullHistoryList: ListView
     private lateinit var btnCloseHistory: Button
 
-    // CHART OVERLAY
     private lateinit var chartOverlay: RelativeLayout
     private lateinit var chartContainer: FrameLayout
     private lateinit var btnCloseChart: Button
@@ -156,14 +152,13 @@ class MainActivity : AppCompatActivity() {
         btnCloseHistory.setOnClickListener { performHaptic(); historyOverlay.visibility = View.GONE }
         btnCloseChart.setOnClickListener { performHaptic(); chartOverlay.visibility = View.GONE }
 
-        setupCalculatorButtons() // WITH ERROR GUARD & PDF PRINT
+        setupCalculatorButtons()
         setupCategoryButtons()
         setupEqualButtonTouch()
         setupZeroButtonTouch()
         setupACButtonTouch()
     }
 
-    // --- CALCULATOR & PRINT LOGIC ---
     private fun setupCalculatorButtons() {
         val numberButtons = listOf(R.id.btn0, R.id.btn1, R.id.btn2, R.id.btn3, R.id.btn4, R.id.btn5, R.id.btn6, R.id.btn7, R.id.btn8, R.id.btn9)
         for (id in numberButtons) {
@@ -176,7 +171,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // SMART DOT
         findViewById<Button>(R.id.btnDot).setOnClickListener {
             performHaptic()
             if (isNewEntry) { secd.text = "0."; isNewEntry = false; return@setOnClickListener }
@@ -185,7 +179,6 @@ class MainActivity : AppCompatActivity() {
             if (!lastPart.contains(".")) secd.append(".")
         }
 
-        // SMART OPERATORS
         val opButtons = mapOf(R.id.btnAdd to "+", R.id.btnSub to "-", R.id.btnMul to "×", R.id.btnDiv to "÷")
         for ((id, op) in opButtons) {
             findViewById<Button>(id).setOnClickListener {
@@ -214,26 +207,29 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // ** PRINT PDF BUTTON **
         findViewById<Button>(R.id.btnPrint).setOnClickListener { sharePdfReport() }
         hisd.setOnItemLongClickListener { _, _, position, _ -> showDeleteDialog(position); true }
     }
 
-    // --- PDF GENERATION ENGINE ---
+    // --- DARK MODE PDF ENGINE ---
     private fun sharePdfReport() {
         if(expenseList.isEmpty()) { showFastToast("Nothing to Print!"); return }
         performHaptic()
-        showFastToast("Generating PDF Report...")
+        showFastToast("Generating Professional Report...")
 
         val pdfDocument = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4 Size
 
-        val paintText = Paint().apply { color = Color.BLACK; textSize = 14f; typeface = Typeface.MONOSPACE }
-        val paintHeader = Paint().apply { color = Color.BLACK; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-        val paintGreen = Paint().apply { color = Color.parseColor("#006400"); textSize = 18f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-        val paintLine = Paint().apply { color = Color.GRAY; strokeWidth = 1f }
+        // PAINTS (DARK MODE STYLES)
+        val paintBg = Paint().apply { color = Color.parseColor("#121212"); style = Paint.Style.FILL }
+        val paintText = Paint().apply { color = Color.LTGRAY; textSize = 14f; typeface = Typeface.MONOSPACE }
+        val paintHeader = Paint().apply { color = Color.GREEN; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+        val paintSubHeader = Paint().apply { color = Color.CYAN; textSize = 18f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+        val paintLine = Paint().apply { color = Color.DKGRAY; strokeWidth = 2f }
+        val paintBarText = Paint().apply { color = Color.WHITE; textSize = 14f; isFakeBoldText = true }
+        val paintBarShadow = Paint().apply { color = Color.BLACK; textSize = 14f; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 3f }
 
-        // --- 1. TRANSACTION PAGES ---
+        // --- 1. TRANSACTION LIST (Pages) ---
         val itemsPerPage = 25
         val totalItems = expenseList.size
         var pageCount = 0
@@ -241,17 +237,20 @@ class MainActivity : AppCompatActivity() {
         for (i in 0 until totalItems step itemsPerPage) {
             val page = pdfDocument.startPage(pageInfo)
             val canvas = page.canvas
-            var y = 60f
 
-            // Header on every page
+            // DRAW BLACK BACKGROUND
+            canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
+
+            var y = 60f
+            // Header
             canvas.drawText("BYTESKULL FINANCE", 297f, y, paintHeader)
             y += 30f
-            canvas.drawText("SHEET: ${getSheetName(currentSheetID)}", 297f, y, paintGreen)
+            canvas.drawText("SHEET: ${getSheetName(currentSheetID)}", 297f, y, paintSubHeader)
             y += 40f
             canvas.drawLine(40f, y, 555f, y, paintLine)
             y += 30f
 
-            // Items
+            // List Items
             val end = min(i + itemsPerPage, totalItems)
             for (j in i until end) {
                 val item = expenseList[j]
@@ -265,49 +264,24 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // Footer Page Number
+            // Footer
             canvas.drawText("Page ${pageCount + 1}", 297f, 800f, paintText)
-
             pdfDocument.finishPage(page)
             pageCount++
         }
 
-        // --- 2. SUMMARY PAGE ---
-        val summaryPage = pdfDocument.startPage(pageInfo)
-        var canvas = summaryPage.canvas
-        var y = 60f
-
-        canvas.drawText("CATEGORY BREAKDOWN", 297f, y, paintHeader)
-        y += 50f
-
-        for(item in summaryList) {
-            val parts = item.split(":")
-            if(parts.size == 2) {
-                canvas.drawText(parts[0].trim(), 50f, y, paintText)
-                val price = parts[1].trim()
-                val priceWidth = paintText.measureText(price)
-                canvas.drawText(price, 545f - priceWidth, y, paintText)
-                y += 25f
-            }
-        }
-
-        y += 40f
-        canvas.drawLine(40f, y, 555f, y, paintLine)
-        y += 40f
-
-        // Grand Total
-        val totalPaint = Paint().apply { color = Color.BLACK; textSize = 30f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
-        canvas.drawText("TOTAL: ₹${removeZero(grandTotal)}", 545f, y, totalPaint)
-
-        pdfDocument.finishPage(summaryPage)
-
-        // --- 3. CHART PAGES (With Pagination Fix) ---
+        // --- 2. SORTED CATEGORY BREAKDOWN (The Bar Chart Page) ---
         var chartPage = pdfDocument.startPage(pageInfo)
-        var chartCanvas = chartPage.canvas
-        y = 60f
-        chartCanvas.drawText("VISUAL ANALYTICS", 297f, y, paintHeader)
+        var canvas = chartPage.canvas
+
+        // Black BG
+        canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
+
+        var y = 60f
+        canvas.drawText("CATEGORY BREAKDOWN", 297f, y, paintHeader)
         y += 60f
 
+        // 1. Prepare Data
         val dataMap = HashMap<String, Float>()
         for(item in summaryList) {
             val parts = item.split(":")
@@ -318,37 +292,60 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val maxVal = dataMap.values.maxOrNull() ?: 1f
-        val chartColors = HorizontalBarChart(this, dataMap).colors
-        val barPaint = Paint()
-        val textWhite = Paint().apply { color = Color.WHITE; textSize = 14f; isFakeBoldText = true }
+        // 2. SORT DATA (Highest Spend First)
+        val sortedData = dataMap.toList().sortedByDescending { (_, value) -> value }
 
-        for((key, value) in dataMap) {
-            // ** PAGINATION CHECK ** // If drawing the next bar goes past height 780, start new page
+        val maxVal = if(sortedData.isNotEmpty()) sortedData[0].second else 1f
+        // Reuse App Colors
+        val chartColors = HorizontalBarChart(this, HashMap()).colors
+        val barPaint = Paint()
+
+        // 3. Draw Sorted Bars
+        for((key, value) in sortedData) {
+            // Pagination Check
             if (y > 780f) {
                 pdfDocument.finishPage(chartPage)
                 chartPage = pdfDocument.startPage(pageInfo)
-                chartCanvas = chartPage.canvas
+                canvas = chartPage.canvas
+                canvas.drawRect(0f, 0f, 595f, 842f, paintBg) // Black BG for new page
                 y = 60f
-                chartCanvas.drawText("VISUAL ANALYTICS (Cont.)", 297f, y, paintHeader)
+                canvas.drawText("BREAKDOWN (Cont.)", 297f, y, paintHeader)
                 y += 60f
             }
 
-            val barWidth = (value / maxVal) * 400f
+            // Calculate Width
+            val barWidth = (value / maxVal) * 450f // Max width on PDF
             val cleanWidth = max(barWidth, 10f)
 
+            // Draw Bar
             barPaint.color = chartColors[key] ?: Color.GRAY
-            chartCanvas.drawRect(50f, y, 50f + cleanWidth, y + 40f, barPaint)
+            canvas.drawRect(50f, y, 50f + cleanWidth, y + 40f, barPaint)
 
+            // Draw Label INSIDE Bar (White text with Black Outline)
             val label = "$key: ₹${value.toInt()}"
-            chartCanvas.drawText(label, 60f, y + 26f, textWhite)
+            canvas.drawText(label, 60f, y + 26f, paintBarShadow)
+            canvas.drawText(label, 60f, y + 26f, paintBarText)
 
             y += 50f
         }
 
+        // Grand Total at Bottom of Chart
+        y += 20f
+        if (y > 780f) {
+            // If no space for total, push to new page
+            pdfDocument.finishPage(chartPage)
+            chartPage = pdfDocument.startPage(pageInfo)
+            canvas = chartPage.canvas
+            canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
+            y = 100f
+        }
+
+        val totalPaint = Paint().apply { color = Color.WHITE; textSize = 30f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
+        canvas.drawText("TOTAL: ₹${removeZero(grandTotal)}", 545f, y, totalPaint)
+
         pdfDocument.finishPage(chartPage)
 
-        // --- 4. SAVE & SHARE ---
+        // --- SAVE & SHARE ---
         try {
             val cachePath = File(cacheDir, "reports")
             cachePath.mkdirs()
@@ -387,7 +384,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- CHART LOGIC (SCREEN) ---
     private fun showChart() {
         performHaptic()
         chartContainer.removeAllViews()
@@ -639,14 +635,19 @@ class MainActivity : AppCompatActivity() {
     private fun removeZero(v: Double) = DecimalFormat("#.##").format(v)
 
     class HorizontalBarChart(context: Context, val data: HashMap<String, Float>) : View(context) {
+        val colors = mapOf("Food" to Color.parseColor("#FFA500"), "Rent" to Color.parseColor("#4CAF50"), "Travel" to Color.parseColor("#FFC107"), "Fuel" to Color.parseColor("#F44336"), "Shopping" to Color.parseColor("#E91E63"), "Health" to Color.parseColor("#00BCD4"), "Grocery" to Color.parseColor("#9C27B0"), "Gym" to Color.parseColor("#009688"), "Wifi" to Color.parseColor("#2196F3"), "Electricity" to Color.parseColor("#CDDC39"), "Cable" to Color.parseColor("#673AB7"), "Water" to Color.parseColor("#3F51B5"), "Drinks" to Color.parseColor("#795548"), "School" to Color.parseColor("#8BC34A"), "Tuition" to Color.parseColor("#FF9800"), "Househelp" to Color.parseColor("#607D8B"))
         private val paint = Paint().apply { isAntiAlias = true; style = Paint.Style.FILL }
         private val textPaint = Paint().apply { isAntiAlias = true; color = Color.WHITE; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true }
         private val shadowPaint = Paint().apply { isAntiAlias = true; color = Color.BLACK; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 3f }
-        val colors = mapOf("Food" to Color.parseColor("#FFA500"), "Rent" to Color.parseColor("#4CAF50"), "Travel" to Color.parseColor("#FFC107"), "Fuel" to Color.parseColor("#F44336"), "Shopping" to Color.parseColor("#E91E63"), "Health" to Color.parseColor("#00BCD4"), "Grocery" to Color.parseColor("#9C27B0"), "Gym" to Color.parseColor("#009688"), "Wifi" to Color.parseColor("#2196F3"), "Electricity" to Color.parseColor("#CDDC39"), "Cable" to Color.parseColor("#673AB7"), "Water" to Color.parseColor("#3F51B5"), "Drinks" to Color.parseColor("#795548"), "School" to Color.parseColor("#8BC34A"), "Tuition" to Color.parseColor("#FF9800"), "Househelp" to Color.parseColor("#607D8B"))
+
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) { setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (data.size * 110 + 80)) }
+
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas); val maxVal = data.values.maxOrNull() ?: 1f; var y = 40f
-            for((key, value) in data) {
+            // SORT ON SCREEN AS WELL
+            val sortedData = data.toList().sortedByDescending { it.second }
+
+            for((key, value) in sortedData) {
                 val barWidth = (value / maxVal) * (width - 80f); val cleanWidth = max(barWidth, 10f)
                 paint.color = colors[key] ?: Color.GRAY; canvas.drawRect(40f, y, 40f + cleanWidth, y + 80f, paint)
                 val label = "$key: ₹${value.toInt()}"; val textX = 60f; val textY = y + 52f
