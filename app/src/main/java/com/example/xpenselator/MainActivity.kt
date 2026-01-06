@@ -5,8 +5,11 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -31,10 +34,17 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.core.view.GestureDetectorCompat
+import java.io.File
+import java.io.FileOutputStream
 import java.text.DecimalFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 class MainActivity : AppCompatActivity() {
 
@@ -44,12 +54,10 @@ class MainActivity : AppCompatActivity() {
     private val expenseList = ArrayList<String>()
     private val summaryList = ArrayList<String>()
 
-    // Sheet Logic
     private var currentSheetID = 1
     private var maxSheetID = 1
     private var currentToast: Toast? = null
 
-    // Touch Logic
     private lateinit var gestureDetector: GestureDetectorCompat
     private var touchStartY = 0f
     private var isSheetMode = false
@@ -58,7 +66,6 @@ class MainActivity : AppCompatActivity() {
     private var longPressRunnable: Runnable? = null
     private var chartRunnable: Runnable? = null
 
-    // System
     private var isSoundOn = true
     private var isVibrationOn = true
     private var isDarkMode = true
@@ -99,7 +106,6 @@ class MainActivity : AppCompatActivity() {
 
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
-        // Connect UI
         mainLayout = findViewById(R.id.mainLayout)
         headerBox = findViewById(R.id.headerBox)
         btnSettings = findViewById(R.id.btnSettings)
@@ -110,14 +116,12 @@ class MainActivity : AppCompatActivity() {
         summaryView = findViewById(R.id.summaryList)
         projectName = findViewById(R.id.projectName)
 
-        // OVERLAYS
         overlayContainer = findViewById(R.id.sheetOverlayContainer)
         overlayText = findViewById(R.id.sheetOverlayText)
         historyOverlay = findViewById(R.id.historyOverlay)
         fullHistoryList = findViewById(R.id.fullHistoryList)
         btnCloseHistory = findViewById(R.id.btnCloseHistory)
 
-        // CHART
         chartOverlay = findViewById(R.id.chartOverlay)
         chartContainer = findViewById(R.id.chartContainer)
         btnCloseChart = findViewById(R.id.btnCloseChart)
@@ -132,7 +136,6 @@ class MainActivity : AppCompatActivity() {
         loadGlobalSettings()
         loadSheetData(1)
 
-        // GESTURE
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
                 if (e1 == null) return false
@@ -146,92 +149,270 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Listeners
         btnSettings.setOnClickListener { showSettingsDialog() }
         projectName.setOnClickListener { showRenameDialog() }
 
-        // HISTORY LOGIC
-        btnHistory.setOnClickListener {
-            performHaptic()
-            historyOverlay.visibility = View.VISIBLE
-            fullHistoryAdapter.notifyDataSetChanged()
-        }
-        btnCloseHistory.setOnClickListener {
-            performHaptic()
-            historyOverlay.visibility = View.GONE
-        }
-
-        // CHART LOGIC
+        btnHistory.setOnClickListener { performHaptic(); historyOverlay.visibility = View.VISIBLE; fullHistoryAdapter.notifyDataSetChanged() }
+        btnCloseHistory.setOnClickListener { performHaptic(); historyOverlay.visibility = View.GONE }
         btnCloseChart.setOnClickListener { performHaptic(); chartOverlay.visibility = View.GONE }
 
-        setupCalculatorButtons()
+        setupCalculatorButtons() // WITH ERROR GUARD & PDF PRINT
         setupCategoryButtons()
         setupEqualButtonTouch()
         setupZeroButtonTouch()
         setupACButtonTouch()
     }
 
-    // --- AC BUTTON (INSTANT RESET) ---
-    private fun setupACButtonTouch() {
-        val btnAC = findViewById<Button>(R.id.btnAC)
-
-        btnAC.setOnClickListener {
-            performHaptic()
-            secd.text = "0"
-            isNewEntry = true
+    // --- CALCULATOR & PRINT LOGIC ---
+    private fun setupCalculatorButtons() {
+        val numberButtons = listOf(R.id.btn0, R.id.btn1, R.id.btn2, R.id.btn3, R.id.btn4, R.id.btn5, R.id.btn6, R.id.btn7, R.id.btn8, R.id.btn9)
+        for (id in numberButtons) {
+            findViewById<Button>(id).setOnClickListener {
+                performHaptic()
+                val digit = (it as Button).text.toString()
+                if (isNewEntry) { secd.text = ""; isNewEntry = false }
+                if (secd.text == "Saved!") secd.text = ""
+                secd.append(digit)
+            }
         }
 
+        // SMART DOT
+        findViewById<Button>(R.id.btnDot).setOnClickListener {
+            performHaptic()
+            if (isNewEntry) { secd.text = "0."; isNewEntry = false; return@setOnClickListener }
+            val current = secd.text.toString()
+            val lastPart = current.split('+', '-', '×', '÷').last()
+            if (!lastPart.contains(".")) secd.append(".")
+        }
+
+        // SMART OPERATORS
+        val opButtons = mapOf(R.id.btnAdd to "+", R.id.btnSub to "-", R.id.btnMul to "×", R.id.btnDiv to "÷")
+        for ((id, op) in opButtons) {
+            findViewById<Button>(id).setOnClickListener {
+                performHaptic()
+                val current = secd.text.toString()
+                if (isNewEntry) isNewEntry = false
+                if (secd.text == "Saved!") { secd.text = "0"; return@setOnClickListener }
+
+                if (current.isNotEmpty()) {
+                    val lastChar = current.last()
+                    if ("+-×÷".contains(lastChar)) {
+                        secd.text = current.dropLast(1) + op
+                    } else {
+                        secd.append(op)
+                    }
+                }
+            }
+        }
+
+        findViewById<Button>(R.id.btnDel).setOnClickListener {
+            performHaptic()
+            val s = secd.text.toString()
+            if (s.isNotEmpty() && s != "Saved!") {
+                secd.text = s.dropLast(1)
+                if (secd.text.isEmpty()) secd.text = "0"
+            }
+        }
+
+        // ** PRINT PDF BUTTON **
+        findViewById<Button>(R.id.btnPrint).setOnClickListener { sharePdfReport() }
+        hisd.setOnItemLongClickListener { _, _, position, _ -> showDeleteDialog(position); true }
+    }
+
+    // --- PDF GENERATION ENGINE ---
+    private fun sharePdfReport() {
+        if(expenseList.isEmpty()) { showFastToast("Nothing to Print!"); return }
+        performHaptic()
+        showFastToast("Generating PDF Report...")
+
+        val pdfDocument = PdfDocument()
+        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4 Size
+
+        val paintText = Paint().apply { color = Color.BLACK; textSize = 14f; typeface = Typeface.MONOSPACE }
+        val paintHeader = Paint().apply { color = Color.BLACK; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+        val paintGreen = Paint().apply { color = Color.parseColor("#006400"); textSize = 18f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+        val paintLine = Paint().apply { color = Color.GRAY; strokeWidth = 1f }
+
+        // --- 1. TRANSACTION PAGES ---
+        val itemsPerPage = 25
+        val totalItems = expenseList.size
+        var pageCount = 0
+
+        for (i in 0 until totalItems step itemsPerPage) {
+            val page = pdfDocument.startPage(pageInfo)
+            val canvas = page.canvas
+            var y = 60f
+
+            // Header on every page
+            canvas.drawText("BYTESKULL FINANCE", 297f, y, paintHeader)
+            y += 30f
+            canvas.drawText("SHEET: ${getSheetName(currentSheetID)}", 297f, y, paintGreen)
+            y += 40f
+            canvas.drawLine(40f, y, 555f, y, paintLine)
+            y += 30f
+
+            // Items
+            val end = min(i + itemsPerPage, totalItems)
+            for (j in i until end) {
+                val item = expenseList[j]
+                val parts = item.split(":")
+                if (parts.size == 2) {
+                    canvas.drawText(parts[0].trim(), 50f, y, paintText)
+                    val price = parts[1].trim()
+                    val priceWidth = paintText.measureText(price)
+                    canvas.drawText(price, 545f - priceWidth, y, paintText)
+                    y += 20f
+                }
+            }
+
+            // Footer Page Number
+            canvas.drawText("Page ${pageCount + 1}", 297f, 800f, paintText)
+
+            pdfDocument.finishPage(page)
+            pageCount++
+        }
+
+        // --- 2. SUMMARY PAGE ---
+        val summaryPage = pdfDocument.startPage(pageInfo)
+        var canvas = summaryPage.canvas
+        var y = 60f
+
+        canvas.drawText("CATEGORY BREAKDOWN", 297f, y, paintHeader)
+        y += 50f
+
+        for(item in summaryList) {
+            val parts = item.split(":")
+            if(parts.size == 2) {
+                canvas.drawText(parts[0].trim(), 50f, y, paintText)
+                val price = parts[1].trim()
+                val priceWidth = paintText.measureText(price)
+                canvas.drawText(price, 545f - priceWidth, y, paintText)
+                y += 25f
+            }
+        }
+
+        y += 40f
+        canvas.drawLine(40f, y, 555f, y, paintLine)
+        y += 40f
+
+        // Grand Total
+        val totalPaint = Paint().apply { color = Color.BLACK; textSize = 30f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
+        canvas.drawText("TOTAL: ₹${removeZero(grandTotal)}", 545f, y, totalPaint)
+
+        pdfDocument.finishPage(summaryPage)
+
+        // --- 3. CHART PAGES (With Pagination Fix) ---
+        var chartPage = pdfDocument.startPage(pageInfo)
+        var chartCanvas = chartPage.canvas
+        y = 60f
+        chartCanvas.drawText("VISUAL ANALYTICS", 297f, y, paintHeader)
+        y += 60f
+
+        val dataMap = HashMap<String, Float>()
+        for(item in summaryList) {
+            val parts = item.split(":")
+            if(parts.size == 2) {
+                val cleanName = parts[0].trim().filter { it.isLetter() }
+                val value = parts[1].replace("₹","").trim().toFloatOrNull() ?: 0f
+                if(value > 0) dataMap[cleanName] = value
+            }
+        }
+
+        val maxVal = dataMap.values.maxOrNull() ?: 1f
+        val chartColors = HorizontalBarChart(this, dataMap).colors
+        val barPaint = Paint()
+        val textWhite = Paint().apply { color = Color.WHITE; textSize = 14f; isFakeBoldText = true }
+
+        for((key, value) in dataMap) {
+            // ** PAGINATION CHECK ** // If drawing the next bar goes past height 780, start new page
+            if (y > 780f) {
+                pdfDocument.finishPage(chartPage)
+                chartPage = pdfDocument.startPage(pageInfo)
+                chartCanvas = chartPage.canvas
+                y = 60f
+                chartCanvas.drawText("VISUAL ANALYTICS (Cont.)", 297f, y, paintHeader)
+                y += 60f
+            }
+
+            val barWidth = (value / maxVal) * 400f
+            val cleanWidth = max(barWidth, 10f)
+
+            barPaint.color = chartColors[key] ?: Color.GRAY
+            chartCanvas.drawRect(50f, y, 50f + cleanWidth, y + 40f, barPaint)
+
+            val label = "$key: ₹${value.toInt()}"
+            chartCanvas.drawText(label, 60f, y + 26f, textWhite)
+
+            y += 50f
+        }
+
+        pdfDocument.finishPage(chartPage)
+
+        // --- 4. SAVE & SHARE ---
+        try {
+            val cachePath = File(cacheDir, "reports")
+            cachePath.mkdirs()
+            val file = File(cachePath, "ExpenseReport.pdf")
+            val outputStream = FileOutputStream(file)
+            pdfDocument.writeTo(outputStream)
+            pdfDocument.close()
+            outputStream.close()
+
+            val contentUri: Uri = FileProvider.getUriForFile(this, "$packageName.provider", file)
+            val shareIntent = Intent().apply {
+                action = Intent.ACTION_SEND
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                setDataAndType(contentUri, "application/pdf")
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+            }
+            startActivity(Intent.createChooser(shareIntent, "Share Report"))
+        } catch (e: Exception) {
+            e.printStackTrace()
+            showFastToast("Error PDF: ${e.message}")
+            pdfDocument.close()
+        }
+    }
+
+    private fun setupACButtonTouch() {
+        val btnAC = findViewById<Button>(R.id.btnAC)
+        btnAC.setOnClickListener { performHaptic(); secd.text = "0"; isNewEntry = true }
         btnAC.setOnLongClickListener {
             performHaptic()
-            // WIPE SHEET INSTANTLY (No Dialog)
-            grandTotal = 0.0
-            expenseList.clear()
-            summaryList.clear()
-            topd.text = "₹0"
-            secd.text = "0"
-            listAdapter.notifyDataSetChanged()
-            summaryAdapter.notifyDataSetChanged()
+            grandTotal = 0.0; expenseList.clear(); summaryList.clear()
+            topd.text = "₹0"; secd.text = "0"
+            listAdapter.notifyDataSetChanged(); summaryAdapter.notifyDataSetChanged()
             saveSheetData(currentSheetID)
             showFastToast("Sheet Wiped")
             true
         }
     }
 
-    // --- CHART LOGIC (BARS) ---
+    // --- CHART LOGIC (SCREEN) ---
     private fun showChart() {
         performHaptic()
         chartContainer.removeAllViews()
-
         val dataMap = HashMap<String, Float>()
         for(item in summaryList) {
             val parts = item.split(":")
             if(parts.size == 2) {
-                val rawName = parts[0].trim()
-                val cleanName = rawName.filter { it.isLetter() }
+                val cleanName = parts[0].trim().filter { it.isLetter() }
                 val value = parts[1].replace("₹","").trim().toFloatOrNull() ?: 0f
                 if(value > 0) dataMap[cleanName] = value
             }
         }
-
         if (dataMap.isNotEmpty()) {
             val chart = HorizontalBarChart(this, dataMap)
             chartContainer.addView(chart)
             chartOverlay.visibility = View.VISIBLE
-        } else {
-            showFastToast("No Data to Chart!")
-        }
+        } else { showFastToast("No Data to Chart!") }
     }
 
     private fun setupZeroButtonTouch() {
         val btn0 = findViewById<Button>(R.id.btn0)
         chartRunnable = Runnable { showChart() }
-
         btn0.setOnTouchListener { _, event ->
             when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    handler.postDelayed(chartRunnable!!, 500)
-                    true
-                }
+                MotionEvent.ACTION_DOWN -> { handler.postDelayed(chartRunnable!!, 500); true }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(chartRunnable!!)
                     if (event.eventTime - event.downTime < 500) {
@@ -246,7 +427,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- TOUCH LOGIC (SPB) ---
     private fun setupEqualButtonTouch() {
         val btnEqual = findViewById<Button>(R.id.btnEqual)
         longPressRunnable = Runnable {
@@ -256,7 +436,6 @@ class MainActivity : AppCompatActivity() {
             overlayContainer.bringToFront()
             updateOverlayList(currentSheetID)
         }
-
         btnEqual.setOnTouchListener { _, event ->
             if (gestureDetector.onTouchEvent(event)) {
                 handler.removeCallbacks(longPressRunnable!!)
@@ -265,13 +444,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnTouchListener true
             }
             when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    touchStartY = event.rawY
-                    isSheetMode = false
-                    tempSheetID = currentSheetID
-                    handler.postDelayed(longPressRunnable!!, 300)
-                    true
-                }
+                MotionEvent.ACTION_DOWN -> { touchStartY = event.rawY; isSheetMode = false; tempSheetID = currentSheetID; handler.postDelayed(longPressRunnable!!, 300); true }
                 MotionEvent.ACTION_MOVE -> {
                     if (isSheetMode) {
                         val diff = (touchStartY - event.rawY).toInt()
@@ -279,32 +452,16 @@ class MainActivity : AppCompatActivity() {
                         var potentialSheet = currentSheetID + steps
                         if (potentialSheet < 1) potentialSheet = 1
                         if (potentialSheet > maxSheetID) potentialSheet = maxSheetID
-                        if (potentialSheet != tempSheetID) {
-                            performHaptic()
-                            tempSheetID = potentialSheet
-                            updateOverlayList(tempSheetID)
-                        }
-                    } else {
-                        if (abs(touchStartY - event.rawY) > 50) {
-                            handler.removeCallbacks(longPressRunnable!!)
-                        }
-                    }
+                        if (potentialSheet != tempSheetID) { performHaptic(); tempSheetID = potentialSheet; updateOverlayList(tempSheetID) }
+                    } else { if (abs(touchStartY - event.rawY) > 50) handler.removeCallbacks(longPressRunnable!!) }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(longPressRunnable!!)
                     if (isSheetMode) {
-                        overlayContainer.visibility = View.GONE
-                        isSheetMode = false
-                        if (tempSheetID != currentSheetID) {
-                            saveSheetData(currentSheetID)
-                            currentSheetID = tempSheetID
-                            loadSheetData(currentSheetID)
-                            showFastToast("Opened ${getSheetName(currentSheetID)}")
-                        }
-                    } else {
-                        performEqualClick()
-                    }
+                        overlayContainer.visibility = View.GONE; isSheetMode = false
+                        if (tempSheetID != currentSheetID) { saveSheetData(currentSheetID); currentSheetID = tempSheetID; loadSheetData(currentSheetID); showFastToast("Opened ${getSheetName(currentSheetID)}") }
+                    } else { performEqualClick() }
                     true
                 }
                 else -> false
@@ -317,9 +474,7 @@ class MainActivity : AppCompatActivity() {
         val start = highlightID - 3
         val end = highlightID + 3
         for (i in start..end) {
-            if (i < 1 || i > maxSheetID) {
-                lines.add(" ")
-            } else {
+            if (i < 1 || i > maxSheetID) lines.add(" ") else {
                 val name = getSheetName(i)
                 if (i == highlightID) lines.add("▶ $name ◀") else lines.add(name)
             }
@@ -327,7 +482,6 @@ class MainActivity : AppCompatActivity() {
         overlayText.text = lines.joinToString("\n")
     }
 
-    // --- MATH ENGINE ---
     private fun performEqualClick() {
         performHaptic()
         val rawExpression = secd.text.toString()
@@ -354,17 +508,12 @@ class MainActivity : AppCompatActivity() {
             if (currentNum.isNotEmpty()) numbers.add(currentNum.toDoubleOrNull() ?: 0.0)
             if (numbers.isEmpty()) return 0.0
             if (numbers.size == 1) return numbers[0]
-
             var i = 0
             while (i < ops.size) {
                 if (ops[i] == '*' || ops[i] == '/') {
-                    val n1 = numbers[i]
-                    val n2 = numbers[i+1]
-                    var res = 0.0
+                    val n1 = numbers[i]; val n2 = numbers[i+1]; var res = 0.0
                     if (ops[i] == '*') res = n1 * n2 else if (n2 != 0.0) res = n1 / n2
-                    numbers[i] = res
-                    numbers.removeAt(i+1)
-                    ops.removeAt(i)
+                    numbers[i] = res; numbers.removeAt(i+1); ops.removeAt(i)
                 } else i++
             }
             var result = numbers[0]
@@ -376,69 +525,23 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { return 0.0 }
     }
 
-    private fun setupCalculatorButtons() {
-        val numberButtons = listOf(R.id.btn1, R.id.btn2, R.id.btn3, R.id.btn4, R.id.btn5, R.id.btn6, R.id.btn7, R.id.btn8, R.id.btn9, R.id.btnDot)
-        for (id in numberButtons) {
-            findViewById<Button>(id).setOnClickListener {
-                performHaptic()
-                val digit = (it as Button).text.toString()
-                if (isNewEntry) { secd.text = ""; isNewEntry = false }
-                if (secd.text == "Saved!") secd.text = ""
-                secd.append(digit)
-            }
-        }
-        val opButtons = mapOf(R.id.btnAdd to "+", R.id.btnSub to "-", R.id.btnMul to "×", R.id.btnDiv to "÷")
-        for ((id, op) in opButtons) {
-            findViewById<Button>(id).setOnClickListener {
-                performHaptic()
-                val currentText = secd.text.toString()
-                if (isNewEntry) isNewEntry = false
-                if (secd.text == "Saved!") { secd.text = "0"; return@setOnClickListener }
-                if (currentText.isNotEmpty()) {
-                    val lastChar = currentText.last()
-                    if ("+-×÷".contains(lastChar)) secd.text = currentText.dropLast(1) + op else secd.append(op)
-                }
-            }
-        }
-        findViewById<Button>(R.id.btnDel).setOnClickListener {
-            performHaptic()
-            val s = secd.text.toString()
-            if (s.isNotEmpty() && s != "Saved!") {
-                secd.text = s.dropLast(1)
-                if (secd.text.isEmpty()) secd.text = "0"
-            }
-        }
-        findViewById<Button>(R.id.btnPrint).setOnClickListener { shareReceipt() }
-        hisd.setOnItemLongClickListener { _, _, position, _ -> showDeleteDialog(position); true }
-    }
-
     private fun setupCategoryButtons() {
         val cats = mapOf(
-            R.id.catFood to Pair("Food", "🍔"),
-            R.id.catRent to Pair("Rent", "🏠"),
-            R.id.catTravel to Pair("Travel", "🚕"),
-            R.id.catFuel to Pair("Fuel", "⛽"),
-            R.id.catShop to Pair("Shopping", "🛍️"),
-            R.id.catMed to Pair("Health", "💊"),
-            R.id.catGrocery to Pair("Grocery", "🛒"),
-            R.id.catGym to Pair("Gym", "💪"),
-            R.id.catWifi to Pair("Wifi", "🛜"),
-            R.id.catPower to Pair("Electricity", "⚡"),
-            R.id.catCable to Pair("Cable", "📺"),
-            R.id.catWater to Pair("Water", "💧"),
-            R.id.catRefresh to Pair("Drinks", "🍺"),
-            R.id.catSchool to Pair("School", "🏫"),
-            R.id.catTuition to Pair("Tuition", "📚"),
-            R.id.catHelp to Pair("Househelp", "👨 🧹")
+            R.id.catFood to Pair("Food", "🍔"), R.id.catRent to Pair("Rent", "🏠"),
+            R.id.catTravel to Pair("Travel", "🚕"), R.id.catFuel to Pair("Fuel", "⛽"),
+            R.id.catShop to Pair("Shopping", "🛍️"), R.id.catMed to Pair("Health", "💊"),
+            R.id.catGrocery to Pair("Grocery", "🛒"), R.id.catGym to Pair("Gym", "💪"),
+            R.id.catWifi to Pair("Wifi", "🛜"), R.id.catPower to Pair("Electricity", "⚡"),
+            R.id.catCable to Pair("Cable", "📺"), R.id.catWater to Pair("Water", "💧"),
+            R.id.catRefresh to Pair("Drinks", "🍺"), R.id.catSchool to Pair("School", "🏫"),
+            R.id.catTuition to Pair("Tuition", "📚"), R.id.catHelp to Pair("Househelp", "👨 🧹")
         )
-
         for ((id, pair) in cats) {
             val btn = findViewById<Button>(id)
             val content = btn.text.toString()
             val newlineIndex = content.indexOf('\n')
             if (newlineIndex > 0) {
-                val span = SpannableString(content)
-                span.setSpan(RelativeSizeSpan(2.0f), 0, newlineIndex, 0)
+                val span = SpannableString(content); span.setSpan(RelativeSizeSpan(2.0f), 0, newlineIndex, 0)
                 btn.text = span
             }
             btn.setOnClickListener {
@@ -454,293 +557,101 @@ class MainActivity : AppCompatActivity() {
                 calculateCategoryTotals()
                 saveSheetData(currentSheetID)
                 hisd.smoothScrollToPosition(expenseList.size - 1)
-                secd.text = "Saved!"
-                isNewEntry = true
+                secd.text = "Saved!"; isNewEntry = true
             }
         }
     }
 
-    private fun showFastToast(message: String) {
-        currentToast?.cancel()
-        currentToast = Toast.makeText(this, message, Toast.LENGTH_SHORT)
-        currentToast?.show()
-    }
-
-    private fun shareReceipt() {
-        if(expenseList.isEmpty()) return
-        performHaptic()
-        val builder = StringBuilder()
-        builder.append("⬛⬛ TOTAL EXPENSES ⬛⬛\n")
-        builder.append("SHEET: ${getSheetName(currentSheetID)}\n")
-        builder.append("----------------\n")
-        for(item in expenseList) builder.append("$item\n")
-        builder.append("----------------\n")
-        builder.append("📊 BREAKDOWN:\n")
-        for(item in summaryList) builder.append("$item\n")
-        builder.append("----------------\n")
-        builder.append("💰 TOTAL: ₹${removeZero(grandTotal)}\n")
-        builder.append("----------------\n")
-        builder.append("Generated by Xpenselator")
-        val intent = Intent(Intent.ACTION_SEND)
-        intent.type = "text/plain"
-        intent.putExtra(Intent.EXTRA_TEXT, builder.toString())
-        startActivity(Intent.createChooser(intent, "Share"))
-    }
+    private fun showFastToast(message: String) { currentToast?.cancel(); currentToast = Toast.makeText(this, message, Toast.LENGTH_SHORT); currentToast?.show() }
 
     private fun showRenameDialog() {
-        val input = EditText(this)
-        input.setText(getSheetName(currentSheetID))
-        input.setSelection(input.text.length)
-        AlertDialog.Builder(this)
-            .setTitle("Rename Workspace")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val newName = input.text.toString()
-                if (newName.isNotEmpty()) {
-                    saveSheetName(currentSheetID, newName)
-                    projectName.text = newName.uppercase()
-                    showFastToast("Renamed!")
-                }
-            }
-            .setNegativeButton("Cancel", null).show()
+        val input = EditText(this); input.setText(getSheetName(currentSheetID)); input.setSelection(input.text.length)
+        AlertDialog.Builder(this).setTitle("Rename Workspace").setView(input).setPositiveButton("Save") { _, _ ->
+            val newName = input.text.toString()
+            if (newName.isNotEmpty()) { saveSheetName(currentSheetID, newName); projectName.text = newName.uppercase(); showFastToast("Renamed!") }
+        }.setNegativeButton("Cancel", null).show()
     }
 
-    private fun saveSheetName(id: Int, name: String) {
-        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit()
-        prefs.putString("NAME_$id", name)
-        prefs.apply()
-    }
-
-    private fun getSheetName(id: Int): String {
-        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
-        return prefs.getString("NAME_$id", "SHEET $id") ?: "SHEET $id"
-    }
+    private fun saveSheetName(id: Int, name: String) { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit(); prefs.putString("NAME_$id", name); prefs.apply() }
+    private fun getSheetName(id: Int): String { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); return prefs.getString("NAME_$id", "SHEET $id") ?: "SHEET $id" }
 
     private fun goToNextSheet() {
-        performHaptic()
-        saveSheetData(currentSheetID)
-        if (currentSheetID == maxSheetID) {
-            maxSheetID++
-            currentSheetID = maxSheetID
-            clearScreenForNewSheet()
-            projectName.text = getSheetName(currentSheetID)
-            saveGlobalSettings()
-            showFastToast("Created New Sheet")
-        } else {
-            currentSheetID++
-            loadSheetData(currentSheetID)
-            showFastToast(getSheetName(currentSheetID))
-        }
+        performHaptic(); saveSheetData(currentSheetID)
+        if (currentSheetID == maxSheetID) { maxSheetID++; currentSheetID = maxSheetID; clearScreenForNewSheet(); projectName.text = getSheetName(currentSheetID); saveGlobalSettings(); showFastToast("Created New Sheet") }
+        else { currentSheetID++; loadSheetData(currentSheetID); showFastToast(getSheetName(currentSheetID)) }
     }
 
     private fun goToPrevSheet() {
-        if (currentSheetID > 1) {
-            performHaptic()
-            saveSheetData(currentSheetID)
-            currentSheetID--
-            loadSheetData(currentSheetID)
-            showFastToast(getSheetName(currentSheetID))
-        } else {
-            showFastToast("Top Reached")
-        }
+        if (currentSheetID > 1) { performHaptic(); saveSheetData(currentSheetID); currentSheetID--; loadSheetData(currentSheetID); showFastToast(getSheetName(currentSheetID)) } else { showFastToast("Top Reached") }
     }
 
-    private fun clearScreenForNewSheet() {
-        grandTotal = 0.0
-        expenseList.clear()
-        summaryList.clear()
-        secd.text = "0"
-        topd.text = "₹0" // FIXED: Explicitly clear top display
-        projectName.text = getSheetName(currentSheetID)
-        listAdapter.notifyDataSetChanged()
-        summaryAdapter.notifyDataSetChanged()
-    }
+    private fun clearScreenForNewSheet() { grandTotal = 0.0; expenseList.clear(); summaryList.clear(); secd.text = "0"; topd.text = "₹0"; projectName.text = getSheetName(currentSheetID); listAdapter.notifyDataSetChanged(); summaryAdapter.notifyDataSetChanged() }
 
     private fun calculateCategoryTotals() {
         val totals = HashMap<String, Double>()
         for (item in expenseList) {
             try {
-                val parts = item.split(":")
-                if (parts.size == 2) {
-                    val catName = parts[0].trim()
-                    val priceStr = parts[1].replace("₹", "").trim()
-                    val price = priceStr.toDoubleOrNull() ?: 0.0
-                    val currentTotal = totals.getOrDefault(catName, 0.0)
+                val parts = item.split(":"); if (parts.size == 2) {
+                    val catName = parts[0].trim(); val priceStr = parts[1].replace("₹", "").trim()
+                    val price = priceStr.toDoubleOrNull() ?: 0.0; val currentTotal = totals.getOrDefault(catName, 0.0)
                     totals[catName] = currentTotal + price
                 }
             } catch (e: Exception) { }
         }
-        summaryList.clear()
-        for ((name, total) in totals) {
-            summaryList.add("$name: ₹${removeZero(total)}")
-        }
-        summaryAdapter.notifyDataSetChanged()
+        summaryList.clear(); for ((name, total) in totals) { summaryList.add("$name: ₹${removeZero(total)}") }; summaryAdapter.notifyDataSetChanged()
     }
 
-    private fun saveSheetData(sheetId: Int) {
-        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit()
-        prefs.putFloat("TOTAL_$sheetId", grandTotal.toFloat())
-        prefs.putString("LIST_$sheetId", expenseList.joinToString("#"))
-        prefs.apply()
-    }
+    private fun saveSheetData(sheetId: Int) { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit(); prefs.putFloat("TOTAL_$sheetId", grandTotal.toFloat()); prefs.putString("LIST_$sheetId", expenseList.joinToString("#")); prefs.apply() }
 
-    // --- GHOST FIX: RESET TOTAL TO 0 BEFORE LOADING ---
     private fun loadSheetData(sheetId: Int) {
-        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
-        val listString = prefs.getString("LIST_$sheetId", "")
-
-        // CRITICAL FIX: Reset everything first
-        expenseList.clear()
-        grandTotal = 0.0
-
+        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); val listString = prefs.getString("LIST_$sheetId", "")
+        expenseList.clear(); grandTotal = 0.0
         if (!listString.isNullOrEmpty()) {
-            val items = listString.split("#")
-            expenseList.addAll(items)
-
-            // Recalculate strictly from items
-            for (item in items) {
-                val priceStr = item.substringAfter("₹").trim()
-                grandTotal += priceStr.toDoubleOrNull() ?: 0.0
-            }
+            val items = listString.split("#"); expenseList.addAll(items)
+            for (item in items) { val priceStr = item.substringAfter("₹").trim(); grandTotal += priceStr.toDoubleOrNull() ?: 0.0 }
         }
-
-        topd.text = "₹${removeZero(grandTotal)}"
-        projectName.text = getSheetName(sheetId)
-        listAdapter.notifyDataSetChanged()
-        calculateCategoryTotals()
-        secd.text = "0"
+        topd.text = "₹${removeZero(grandTotal)}"; projectName.text = getSheetName(sheetId); listAdapter.notifyDataSetChanged(); calculateCategoryTotals(); secd.text = "0"
     }
 
-    private fun saveGlobalSettings() {
-        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit()
-        prefs.putInt("MAX_SHEETS", maxSheetID)
-        prefs.putInt("LAST_OPEN_SHEET", currentSheetID)
-        prefs.putBoolean("VIB_ON", isVibrationOn)
-        prefs.putBoolean("SND_ON", isSoundOn)
-        prefs.putBoolean("DARK_MODE", isDarkMode)
-        prefs.apply()
-    }
-
-    private fun loadGlobalSettings() {
-        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
-        maxSheetID = prefs.getInt("MAX_SHEETS", 1)
-        currentSheetID = prefs.getInt("LAST_OPEN_SHEET", 1)
-        isVibrationOn = prefs.getBoolean("VIB_ON", true)
-        isSoundOn = prefs.getBoolean("SND_ON", true)
-        isDarkMode = prefs.getBoolean("DARK_MODE", true)
-        applyTheme()
-    }
+    private fun saveGlobalSettings() { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit(); prefs.putInt("MAX_SHEETS", maxSheetID); prefs.putInt("LAST_OPEN_SHEET", currentSheetID); prefs.putBoolean("VIB_ON", isVibrationOn); prefs.putBoolean("SND_ON", isSoundOn); prefs.putBoolean("DARK_MODE", isDarkMode); prefs.apply() }
+    private fun loadGlobalSettings() { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); maxSheetID = prefs.getInt("MAX_SHEETS", 1); currentSheetID = prefs.getInt("LAST_OPEN_SHEET", 1); isVibrationOn = prefs.getBoolean("VIB_ON", true); isSoundOn = prefs.getBoolean("SND_ON", true); isDarkMode = prefs.getBoolean("DARK_MODE", true); applyTheme() }
 
     private fun applyTheme() {
-        if (isDarkMode) {
-            mainLayout.setBackgroundColor(Color.parseColor("#121212"))
-            headerBox.setBackgroundColor(Color.parseColor("#1E1E1E"))
-            btnSettings.setColorFilter(Color.WHITE)
-            btnHistory.setColorFilter(Color.WHITE)
-            topd.setTextColor(Color.parseColor("#00FF00"))
-            secd.setBackgroundColor(Color.parseColor("#2C2C2C"))
-            secd.setTextColor(Color.parseColor("#00FFFF"))
-        } else {
-            mainLayout.setBackgroundColor(Color.parseColor("#FFFFFF"))
-            headerBox.setBackgroundColor(Color.parseColor("#DDDDDD"))
-            btnSettings.setColorFilter(Color.BLACK)
-            btnHistory.setColorFilter(Color.BLACK)
-            topd.setTextColor(Color.parseColor("#000000"))
-            secd.setBackgroundColor(Color.parseColor("#EEEEEE"))
-            secd.setTextColor(Color.parseColor("#333333"))
-        }
+        if (isDarkMode) { mainLayout.setBackgroundColor(Color.parseColor("#121212")); headerBox.setBackgroundColor(Color.parseColor("#1E1E1E")); btnSettings.setColorFilter(Color.WHITE); btnHistory.setColorFilter(Color.WHITE); topd.setTextColor(Color.parseColor("#00FF00")); secd.setBackgroundColor(Color.parseColor("#2C2C2C")); secd.setTextColor(Color.parseColor("#00FFFF")) }
+        else { mainLayout.setBackgroundColor(Color.parseColor("#FFFFFF")); headerBox.setBackgroundColor(Color.parseColor("#DDDDDD")); btnSettings.setColorFilter(Color.BLACK); btnHistory.setColorFilter(Color.BLACK); topd.setTextColor(Color.parseColor("#000000")); secd.setBackgroundColor(Color.parseColor("#EEEEEE")); secd.setTextColor(Color.parseColor("#333333")) }
     }
 
-    // --- SETTINGS DIALOG ---
     private fun showSettingsDialog() {
-        val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null)
-        val dialog = AlertDialog.Builder(this).setView(dialogView).create()
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-
-        val swSound = dialogView.findViewById<Switch>(R.id.swSound)
-        val swVib = dialogView.findViewById<Switch>(R.id.swVib)
-        val swTheme = dialogView.findViewById<Switch>(R.id.swTheme)
-        val btnClose = dialogView.findViewById<Button>(R.id.btnCloseSettings)
-
-        swSound.isChecked = isSoundOn
-        swVib.isChecked = isVibrationOn
-        swTheme.isChecked = isDarkMode
-
-        swSound.setOnCheckedChangeListener { _, isChecked -> isSoundOn = isChecked; saveGlobalSettings() }
-        swVib.setOnCheckedChangeListener { _, isChecked -> isVibrationOn = isChecked; saveGlobalSettings() }
-        swTheme.setOnCheckedChangeListener { _, isChecked -> isDarkMode = isChecked; saveGlobalSettings(); applyTheme() }
-        btnClose.setOnClickListener { dialog.dismiss() }
-
-        dialog.show()
+        val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null); val dialog = AlertDialog.Builder(this).setView(dialogView).create(); dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        val swSound = dialogView.findViewById<Switch>(R.id.swSound); val swVib = dialogView.findViewById<Switch>(R.id.swVib); val swTheme = dialogView.findViewById<Switch>(R.id.swTheme); val btnClose = dialogView.findViewById<Button>(R.id.btnCloseSettings)
+        swSound.isChecked = isSoundOn; swVib.isChecked = isVibrationOn; swTheme.isChecked = isDarkMode
+        swSound.setOnCheckedChangeListener { _, isChecked -> isSoundOn = isChecked; saveGlobalSettings() }; swVib.setOnCheckedChangeListener { _, isChecked -> isVibrationOn = isChecked; saveGlobalSettings() }; swTheme.setOnCheckedChangeListener { _, isChecked -> isDarkMode = isChecked; saveGlobalSettings(); applyTheme() }
+        btnClose.setOnClickListener { dialog.dismiss() }; dialog.show()
     }
 
-    private fun performHaptic() {
-        if (isSoundOn) try { toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150) } catch (e: Exception) {}
-        if (isVibrationOn) if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE)) else vibrator.vibrate(50)
-    }
+    private fun performHaptic() { if (isSoundOn) try { toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150) } catch (e: Exception) {}; if (isVibrationOn) if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE)) else vibrator.vibrate(50) }
 
     private fun showDeleteDialog(pos: Int) {
-        val item = expenseList[pos]
-        val price = item.substringAfter("₹").toDoubleOrNull() ?: 0.0
-        AlertDialog.Builder(this).setTitle("Delete?").setMessage(item).setPositiveButton("Yes") { _,_ ->
-            grandTotal -= price; if(grandTotal<0) grandTotal=0.0; topd.text="₹${removeZero(grandTotal)}"
-            expenseList.removeAt(pos)
-            listAdapter.notifyDataSetChanged()
-            calculateCategoryTotals()
-            saveSheetData(currentSheetID)
-        }.setNegativeButton("No", null).show()
+        val item = expenseList[pos]; val price = item.substringAfter("₹").toDoubleOrNull() ?: 0.0
+        AlertDialog.Builder(this).setTitle("Delete?").setMessage(item).setPositiveButton("Yes") { _,_ -> grandTotal -= price; if(grandTotal<0) grandTotal=0.0; topd.text="₹${removeZero(grandTotal)}"; expenseList.removeAt(pos); listAdapter.notifyDataSetChanged(); calculateCategoryTotals(); saveSheetData(currentSheetID) }.setNegativeButton("No", null).show()
     }
 
     private fun removeZero(v: Double) = DecimalFormat("#.##").format(v)
 
-    // --- HORIZONTAL BAR CHART CLASS ---
     class HorizontalBarChart(context: Context, val data: HashMap<String, Float>) : View(context) {
         private val paint = Paint().apply { isAntiAlias = true; style = Paint.Style.FILL }
         private val textPaint = Paint().apply { isAntiAlias = true; color = Color.WHITE; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true }
-        // Shadow for text readability
         private val shadowPaint = Paint().apply { isAntiAlias = true; color = Color.BLACK; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 3f }
-
-        private val barHeight = 80f
-        private val barGap = 30f
-        private val padding = 40f
-
-        // 16 Unique Colors
-        private val colors = mapOf(
-            "Food" to Color.parseColor("#FFA500"), "Rent" to Color.parseColor("#4CAF50"),
-            "Travel" to Color.parseColor("#FFC107"), "Fuel" to Color.parseColor("#F44336"),
-            "Shopping" to Color.parseColor("#E91E63"), "Health" to Color.parseColor("#00BCD4"),
-            "Grocery" to Color.parseColor("#9C27B0"), "Gym" to Color.parseColor("#009688"),
-            "Wifi" to Color.parseColor("#2196F3"), "Electricity" to Color.parseColor("#CDDC39"),
-            "Cable" to Color.parseColor("#673AB7"), "Water" to Color.parseColor("#3F51B5"),
-            "Drinks" to Color.parseColor("#795548"), "School" to Color.parseColor("#8BC34A"),
-            "Tuition" to Color.parseColor("#FF9800"), "Househelp" to Color.parseColor("#607D8B")
-        )
-
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            val totalHeight = (data.size * (barHeight + barGap) + padding * 2).toInt()
-            setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), totalHeight)
-        }
-
+        val colors = mapOf("Food" to Color.parseColor("#FFA500"), "Rent" to Color.parseColor("#4CAF50"), "Travel" to Color.parseColor("#FFC107"), "Fuel" to Color.parseColor("#F44336"), "Shopping" to Color.parseColor("#E91E63"), "Health" to Color.parseColor("#00BCD4"), "Grocery" to Color.parseColor("#9C27B0"), "Gym" to Color.parseColor("#009688"), "Wifi" to Color.parseColor("#2196F3"), "Electricity" to Color.parseColor("#CDDC39"), "Cable" to Color.parseColor("#673AB7"), "Water" to Color.parseColor("#3F51B5"), "Drinks" to Color.parseColor("#795548"), "School" to Color.parseColor("#8BC34A"), "Tuition" to Color.parseColor("#FF9800"), "Househelp" to Color.parseColor("#607D8B"))
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) { setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (data.size * 110 + 80)) }
         override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            val maxVal = data.values.maxOrNull() ?: 1f
-            var y = padding
-
+            super.onDraw(canvas); val maxVal = data.values.maxOrNull() ?: 1f; var y = 40f
             for((key, value) in data) {
-                val barWidth = (value / maxVal) * (width - padding * 2)
-                val cleanWidth = max(barWidth, 10f)
-
-                paint.color = colors[key] ?: Color.GRAY
-                canvas.drawRect(padding, y, padding + cleanWidth, y + barHeight, paint)
-
-                val label = "$key: ₹${value.toInt()}"
-                val textX = padding + 20f
-                val textY = y + barHeight / 2 + 12f
-
-                canvas.drawText(label, textX, textY, shadowPaint)
-                canvas.drawText(label, textX, textY, textPaint)
-
-                y += barHeight + barGap
+                val barWidth = (value / maxVal) * (width - 80f); val cleanWidth = max(barWidth, 10f)
+                paint.color = colors[key] ?: Color.GRAY; canvas.drawRect(40f, y, 40f + cleanWidth, y + 80f, paint)
+                val label = "$key: ₹${value.toInt()}"; val textX = 60f; val textY = y + 52f
+                canvas.drawText(label, textX, textY, shadowPaint); canvas.drawText(label, textX, textY, textPaint)
+                y += 110f
             }
         }
     }
