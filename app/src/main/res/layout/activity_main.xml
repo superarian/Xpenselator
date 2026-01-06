@@ -34,6 +34,20 @@
                 android:layout_marginStart="12dp"
                 android:contentDescription="Settings" />
 
+            <ImageButton
+                android:id="@+id/btnHistory"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_menu_recent_history"
+                android:background="@android:color/transparent"
+                android:scaleType="fitCenter"
+                android:padding="5dp"
+                android:layout_toEndOf="@id/btnSettings"
+                android:layout_alignTop="@id/btnSettings"
+                android:layout_marginStart="15dp"
+                app:tint="#888888"
+                android:contentDescription="History" />
+
             <TextView
                 android:id="@+id/projectName"
                 android:layout_width="wrap_content"
@@ -131,7 +145,14 @@
                 android:rowCount="5"
                 android:padding="2dp">
 
-                <Button android:text="AC" android:id="@+id/btnAC" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FF0055" style="@style/CyberKey"/>
+                <Button
+                    android:id="@+id/btnAC"
+                    android:text="AC"
+                    android:background="@drawable/btn_spb"
+                    app:backgroundTint="@null"
+                    android:textColor="#FF0055"
+                    style="@style/CyberKey"/>
+
                 <Button android:text="÷" android:id="@+id/btnDiv" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
                 <Button android:text="×" android:id="@+id/btnMul" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
                 <Button android:text="⌫" android:id="@+id/btnDel" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FF0055" style="@style/CyberKey"/>
@@ -162,7 +183,15 @@
                     android:layout_rowWeight="2"
                     style="@style/CyberKey"/>
 
-                <Button android:text="0" android:id="@+id/btn0" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:layout_columnSpan="2" android:layout_gravity="fill" style="@style/CyberKey"/>
+                <Button
+                    android:id="@+id/btn0"
+                    android:text="0"
+                    android:background="@drawable/btn_spb"
+                    app:backgroundTint="@null"
+                    android:layout_columnSpan="2"
+                    android:layout_gravity="fill"
+                    style="@style/CyberKey"/>
+
                 <Button android:text="." android:id="@+id/btnDot" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
             </GridLayout>
 
@@ -177,35 +206,20 @@
                     android:padding="2dp">
 
                     <Button android:id="@+id/catFood" android:text="🍔\nFOOD" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catRent" android:text="🏠\nRENT" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catTravel" android:text="🚕\nTRAVEL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catFuel" android:text="⛽\nFUEL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catShop" android:text="🛍️\nSHOPPING" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catMed" android:text="💊\nHEALTH" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catGrocery" android:text="🛒\nGROCERY" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catGym" android:text="💪\nGYM" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catWifi" android:text="🛜\nWIFI" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catPower" android:text="⚡\nELECTRICITY" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catCable" android:text="📺\nCABLE TV" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catWater" android:text="💧\nWATER" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catRefresh" android:text="🍺\nDRINKS" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catSchool" android:text="🏫\nSCHOOL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catTuition" android:text="📚\nTUITION" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
-
                     <Button android:id="@+id/catHelp" android:text="👨 🧹\nHOUSEHELP" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
 
                     <Button android:id="@+id/btnPrint" android:text="PRINT" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFFFF" style="@style/IconBtn"/>
@@ -213,6 +227,99 @@
             </ScrollView>
         </LinearLayout>
     </LinearLayout>
+
+    <RelativeLayout
+        android:id="@+id/historyOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#151515"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        android:elevation="50dp">
+
+        <TextView
+            android:id="@+id/historyTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="TIME MACHINE"
+            android:textColor="#00FFFF"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:padding="20dp"
+            android:background="#222222"/>
+
+        <ListView
+            android:id="@+id/fullHistoryList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_below="@id/historyTitle"
+            android:layout_above="@id/btnCloseHistory"
+            android:divider="#333333"
+            android:dividerHeight="1dp"/>
+
+        <Button
+            android:id="@+id/btnCloseHistory"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_alignParentBottom="true"
+            android:text="CLOSE"
+            android:background="@android:color/black"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"/>
+    </RelativeLayout>
+
+    <RelativeLayout
+        android:id="@+id/chartOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#101010"
+        android:visibility="gone"
+        android:elevation="60dp"
+        android:clickable="true"
+        android:focusable="true">
+
+        <TextView
+            android:id="@+id/chartTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="VISUAL ANALYTICS"
+            android:textColor="#FFA500"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:padding="20dp"
+            android:background="#222222"/>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_below="@id/chartTitle"
+            android:layout_above="@id/btnCloseChart"
+            android:layout_marginBottom="10dp"
+            android:fillViewport="true">
+
+            <FrameLayout
+                android:id="@+id/chartContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"/>
+        </ScrollView>
+
+        <Button
+            android:id="@+id/btnCloseChart"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_alignParentBottom="true"
+            android:text="CLOSE ANALYTICS"
+            android:background="@android:color/black"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"/>
+    </RelativeLayout>
 
     <RelativeLayout
         android:id="@+id/sheetOverlayContainer"
