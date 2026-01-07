@@ -107,6 +107,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // --- FORCE STATUS BAR BLACK ---
+        window.statusBarColor = Color.BLACK
+
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
         mainLayout = findViewById(R.id.mainLayout)
@@ -122,7 +125,6 @@ class MainActivity : AppCompatActivity() {
         expenseAdapter = ExpenseAdapter(expenseList)
         hisd.adapter = expenseAdapter
 
-        // Left Swipe Logic (Delete Single Item)
         val leftSwipe = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
             override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
@@ -137,7 +139,6 @@ class MainActivity : AppCompatActivity() {
         summaryAdapter = SummaryAdapter(summaryList)
         summaryRecycler.adapter = summaryAdapter
 
-        // Right Swipe Logic (Delete Category)
         val rightSwipe = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
             override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
@@ -161,6 +162,7 @@ class MainActivity : AppCompatActivity() {
         chartContainer = findViewById(R.id.chartContainer)
         btnCloseChart = findViewById(R.id.btnCloseChart)
 
+        // Full History also uses standard simple item, but that's okay for the overlay
         fullHistoryAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, expenseList)
         fullHistoryList.adapter = fullHistoryAdapter
 
@@ -192,16 +194,15 @@ class MainActivity : AppCompatActivity() {
         setupACButtonTouch()
     }
 
-    // --- RECYCLER VIEW ADAPTERS ---
+    // --- COMPACT ADAPTERS (Using item_compact.xml) ---
     inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            return ViewHolder(layoutInflater.inflate(android.R.layout.simple_list_item_1, parent, false))
+            return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false))
         }
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             holder.textView.text = data[position]
             holder.textView.setTextColor(Color.WHITE)
-            holder.textView.textSize = 14f
         }
         override fun getItemCount() = data.size
     }
@@ -209,18 +210,15 @@ class MainActivity : AppCompatActivity() {
     inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            return ViewHolder(layoutInflater.inflate(android.R.layout.simple_list_item_1, parent, false))
+            return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false))
         }
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             holder.textView.text = data[position]
-            holder.textView.setTextColor(Color.CYAN) // Cyan text for Summary
-            holder.textView.textSize = 14f
-            holder.textView.typeface = Typeface.MONOSPACE
+            holder.textView.setTextColor(Color.CYAN)
         }
         override fun getItemCount() = data.size
     }
 
-    // --- HELPER TO ADD EXPENSE ---
     private fun addExpenseItem(name: String, emoji: String, priceVal: Double) {
         grandTotal += priceVal
         topd.text = "₹${removeZero(grandTotal)}"
@@ -237,7 +235,6 @@ class MainActivity : AppCompatActivity() {
         isNewEntry = true
     }
 
-    // --- DELETE ITEM LOGIC (LEFT PANEL) ---
     private fun deleteItem(pos: Int) {
         performHaptic()
         val item = expenseList[pos]
@@ -256,13 +253,11 @@ class MainActivity : AppCompatActivity() {
         showFastToast("Deleted")
     }
 
-    // --- DELETE CATEGORY LOGIC (RIGHT PANEL) ---
     private fun deleteCategory(catName: String) {
         performHaptic()
         val iterator = expenseList.iterator()
         var deletedAmount = 0.0
 
-        // Remove ALL items that contain this category name
         while(iterator.hasNext()){
             val item = iterator.next()
             if(item.contains(catName)) {
@@ -284,7 +279,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupCategoryButtons() {
-        // CUSTOM BUTTON
         findViewById<Button>(R.id.catCustom).setOnClickListener {
             performHaptic()
             val rawPrice = secd.text.toString()
@@ -375,7 +369,6 @@ class MainActivity : AppCompatActivity() {
             if (s.isNotEmpty() && s != "Saved!") { secd.text = s.dropLast(1)
                 if (secd.text.isEmpty()) secd.text = "0" }
         }
-        // SHARE BUTTON
         findViewById<Button>(R.id.btnShare).setOnClickListener { sharePdfReport() }
     }
 
