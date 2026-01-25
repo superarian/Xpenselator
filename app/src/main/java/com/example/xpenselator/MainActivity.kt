@@ -47,8 +47,21 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.random.Random
 
 class MainActivity : AppCompatActivity() {
+
+    // --- FREEMIUM SETTINGS ---
+    private var isProVersion = false
+    private val FREE_SHEET_LIMIT = 3
+
+    // --- SECURITY SETTINGS ---
+    // The Bot must use this EXACT same sentence to calculate the code.
+    private val SECRET_SALT = "BYTESKULL_MAKES_APPS_2026"
+
+    // YOUR BOT LINK
+    private val PAYMENT_LINK = "https://t.me/Xpenselator_Bot"
+    // ---------------------------
 
     private var isNewEntry = true
     private var grandTotal = 0.0
@@ -57,6 +70,7 @@ class MainActivity : AppCompatActivity() {
 
     private var currentSheetID = 1
     private var maxSheetID = 1
+    private var deviceRequestID = 0
     private var currentToast: Toast? = null
 
     private lateinit var gestureDetector: GestureDetectorCompat
@@ -123,7 +137,6 @@ class MainActivity : AppCompatActivity() {
         expenseAdapter = ExpenseAdapter(expenseList)
         hisd.adapter = expenseAdapter
 
-        // SWIPE LOGIC: LEFT/RIGHT = DELETE ONLY
         val swipeHandler = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
             override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
@@ -181,7 +194,6 @@ class MainActivity : AppCompatActivity() {
 
         btnSettings.setOnClickListener { showSettingsDialog() }
 
-        // --- PROJECT NAME CLICK LOGIC ---
         projectName.setOnClickListener { showRenameDialog() }
         projectName.setOnLongClickListener {
             deleteCurrentSheet()
@@ -199,12 +211,87 @@ class MainActivity : AppCompatActivity() {
         setupACButtonTouch()
     }
 
-    // --- DELETE CURRENT SHEET LOGIC ---
-    private fun deleteCurrentSheet() {
-        if (maxSheetID <= 1) {
-            showFastToast("Cannot delete the only sheet!")
-            return
+    // --- 1. THE SECURE HASH LOGIC ---
+    private fun generateSecureCode(id: Int): Int {
+        val rawData = SECRET_SALT + id
+        return abs(rawData.hashCode()) % 1000000
+    }
+
+    // --- 2. THE TELEGRAM UPSELL DIALOG ---
+    private fun showUpsellDialog() {
+        performHaptic()
+
+        val layout = LinearLayout(this)
+        layout.orientation = LinearLayout.VERTICAL
+        layout.setPadding(50, 40, 50, 10)
+
+        // Show the User their unique ID
+        val idText = TextView(this)
+        idText.text = "Device ID: $deviceRequestID"
+        idText.setTextColor(Color.YELLOW)
+        idText.textSize = 24f
+        idText.typeface = Typeface.DEFAULT_BOLD
+        idText.textAlignment = View.TEXT_ALIGNMENT_CENTER
+        layout.addView(idText)
+
+        val instructions = TextView(this)
+        instructions.text = "To Activate PRO Mode:\n\n1. Tap the button below to open Telegram.\n2. Send your Payment Screenshot + Device ID.\n3. Receive your unique Code."
+        instructions.setTextColor(Color.LTGRAY)
+        instructions.textSize = 15f
+        layout.addView(instructions)
+
+        // SPACER
+        val spacer1 = TextView(this); spacer1.height = 20; layout.addView(spacer1)
+
+        // THE TELEGRAM BUTTON
+        val btnBuy = Button(this)
+        btnBuy.text = "🤖 OPEN TELEGRAM BOT"
+        btnBuy.setBackgroundColor(Color.parseColor("#0088cc")) // Telegram Blue
+        btnBuy.setTextColor(Color.WHITE)
+        btnBuy.setOnClickListener {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(PAYMENT_LINK))
+            startActivity(intent)
         }
+        layout.addView(btnBuy)
+
+        // SPACER
+        val spacer2 = TextView(this); spacer2.height = 30; layout.addView(spacer2)
+
+        val input = EditText(this)
+        input.hint = "Enter Unlock Code"
+        input.setTextColor(Color.WHITE)
+        input.setHintTextColor(Color.GRAY)
+        layout.addView(input)
+
+        AlertDialog.Builder(this)
+            .setTitle("💎 Upgrade to PRO")
+            .setView(layout)
+            .setPositiveButton("UNLOCK") { _, _ ->
+                val enteredString = input.text.toString().trim()
+                val enteredCode = enteredString.toIntOrNull() ?: -1
+
+                // GENERATE THE CORRECT CODE FOR THIS DEVICE
+                val correctCode = generateSecureCode(deviceRequestID)
+
+                if (enteredCode == correctCode) {
+                    isProVersion = true
+                    saveGlobalSettings()
+                    showFastToast("🚀 PRO UNLOCKED! Thank you!")
+                    try { toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200) } catch (e: Exception) {}
+                } else {
+                    showFastToast("❌ Wrong Code for ID $deviceRequestID")
+                    try { toneGen.startTone(ToneGenerator.TONE_PROP_NACK, 200) } catch (e: Exception) {}
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .create().apply {
+                window?.setBackgroundDrawableResource(android.R.color.background_dark)
+                show()
+            }
+    }
+
+    private fun deleteCurrentSheet() {
+        if (maxSheetID <= 1) { showFastToast("Cannot delete the only sheet!"); return }
         performHaptic()
         val currentName = getSheetName(currentSheetID)
         AlertDialog.Builder(this)
@@ -238,7 +325,6 @@ class MainActivity : AppCompatActivity() {
         showFastToast("Sheet Deleted")
     }
 
-    // --- COMPACT ADAPTERS ---
     inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -413,7 +499,17 @@ class MainActivity : AppCompatActivity() {
             if (s.isNotEmpty() && s != "Saved!") { secd.text = s.dropLast(1)
                 if (secd.text.isEmpty()) secd.text = "0" }
         }
-        findViewById<Button>(R.id.btnShare).setOnClickListener { sharePdfReport() }
+
+        // --- 2. MODIFIED SHARE BUTTON (CHECK PRO STATUS) ---
+        findViewById<Button>(R.id.btnShare).setOnClickListener {
+            if (!isProVersion) {
+                // If FREE user -> Show Upsell
+                showUpsellDialog()
+            } else {
+                // If PRO user -> Allow Sharing
+                sharePdfReport()
+            }
+        }
     }
 
     private fun sharePdfReport() {
@@ -486,7 +582,7 @@ class MainActivity : AppCompatActivity() {
         val maxVal = if(sortedData.isNotEmpty()) sortedData[0].second else 1f
         val chartColors = HorizontalBarChart(this, HashMap()).colors
         val barPaint = Paint(); val textWhite = Paint().apply { color = Color.WHITE; textSize = 14f; isFakeBoldText = true }
-        val textShadow = Paint().apply { color = Color.BLACK; textSize = 14f; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 3f }
+        val textShadow = Paint().apply { color = Color.BLACK; textSize = 14f; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 8f }
 
         for((key, value) in sortedData) {
             if (y > 780f) {
@@ -575,7 +671,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(longPressRunnable!!)
-                    if (isSheetMode) { overlayContainer.visibility = View.GONE; isSheetMode = false; if (tempSheetID != currentSheetID) { saveSheetData(currentSheetID); currentSheetID = tempSheetID; loadSheetData(currentSheetID); showFastToast("Opened ${getSheetName(currentSheetID)}") } } else { performEqualClick() }
+                    if (isSheetMode) {
+                        overlayContainer.visibility = View.GONE; isSheetMode = false
+                        if (tempSheetID != currentSheetID) {
+                            saveSheetData(currentSheetID); currentSheetID = tempSheetID; loadSheetData(currentSheetID); showFastToast("Opened ${getSheetName(currentSheetID)}")
+                        }
+                    } else { performEqualClick() }
                     true
                 }
                 else -> false
@@ -616,7 +717,35 @@ class MainActivity : AppCompatActivity() {
     private fun saveSheetName(id: Int, name: String) { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit(); prefs.putString("NAME_$id", name); prefs.apply() }
     private fun getSheetName(id: Int): String { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); return prefs.getString("NAME_$id", "SHEET $id") ?: "SHEET $id" }
 
-    private fun goToNextSheet() { performHaptic(); saveSheetData(currentSheetID); if (currentSheetID == maxSheetID) { maxSheetID++; currentSheetID = maxSheetID; clearScreenForNewSheet(); projectName.text = getSheetName(currentSheetID); saveGlobalSettings(); showFastToast("Created New Sheet") } else { currentSheetID++; loadSheetData(currentSheetID); showFastToast(getSheetName(currentSheetID)) } }
+    // --- 3. MODIFIED NEW SHEET LOGIC (CHECK PRO STATUS) ---
+    private fun goToNextSheet() {
+        performHaptic()
+
+        // If they are on the last sheet and want to create a new one...
+        if (currentSheetID == maxSheetID) {
+            // CHECK: Are they PRO? Or are they still within the FREE limit (3 sheets)?
+            if (!isProVersion && maxSheetID >= FREE_SHEET_LIMIT) {
+                showUpsellDialog()
+                return
+            }
+
+            // If they pass the check, create new sheet
+            saveSheetData(currentSheetID)
+            maxSheetID++
+            currentSheetID = maxSheetID
+            clearScreenForNewSheet()
+            projectName.text = getSheetName(currentSheetID)
+            saveGlobalSettings()
+            showFastToast("Created New Sheet")
+        } else {
+            // Just moving to an existing sheet (always allowed)
+            saveSheetData(currentSheetID)
+            currentSheetID++
+            loadSheetData(currentSheetID)
+            showFastToast(getSheetName(currentSheetID))
+        }
+    }
+
     private fun goToPrevSheet() { if (currentSheetID > 1) { performHaptic(); saveSheetData(currentSheetID); currentSheetID--; loadSheetData(currentSheetID); showFastToast(getSheetName(currentSheetID)) } else { showFastToast("Top Reached") } }
 
     private fun clearScreenForNewSheet() { grandTotal = 0.0; expenseList.clear(); summaryList.clear(); secd.text = "0"; topd.text = "₹0"; projectName.text = getSheetName(currentSheetID); expenseAdapter.notifyDataSetChanged(); summaryAdapter.notifyDataSetChanged() }
@@ -635,16 +764,64 @@ class MainActivity : AppCompatActivity() {
         topd.text = "₹${removeZero(grandTotal)}"; projectName.text = getSheetName(sheetId); expenseAdapter.notifyDataSetChanged(); calculateCategoryTotals(); secd.text = "0"
     }
 
-    private fun saveGlobalSettings() { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit(); prefs.putInt("MAX_SHEETS", maxSheetID); prefs.putInt("LAST_OPEN_SHEET", currentSheetID); prefs.putBoolean("VIB_ON", isVibrationOn); prefs.putBoolean("SND_ON", isSoundOn); prefs.putBoolean("DARK_MODE", isDarkMode); prefs.apply() }
-    private fun loadGlobalSettings() { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); maxSheetID = prefs.getInt("MAX_SHEETS", 1); currentSheetID = prefs.getInt("LAST_OPEN_SHEET", 1); isVibrationOn = prefs.getBoolean("VIB_ON", true); isSoundOn = prefs.getBoolean("SND_ON", true); isDarkMode = prefs.getBoolean("DARK_MODE", true); applyTheme() }
+    // --- 4. SAVE/LOAD PRO STATUS AND DEVICE ID ---
+    private fun saveGlobalSettings() {
+        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit()
+        prefs.putInt("MAX_SHEETS", maxSheetID)
+        prefs.putInt("LAST_OPEN_SHEET", currentSheetID)
+        prefs.putBoolean("VIB_ON", isVibrationOn)
+        prefs.putBoolean("SND_ON", isSoundOn)
+        prefs.putBoolean("DARK_MODE", isDarkMode)
+        prefs.putBoolean("IS_PRO", isProVersion)
+        prefs.putInt("DEVICE_ID", deviceRequestID) // Save the ID so it doesn't change
+        prefs.apply()
+    }
+
+    private fun loadGlobalSettings() {
+        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+        maxSheetID = prefs.getInt("MAX_SHEETS", 1)
+        currentSheetID = prefs.getInt("LAST_OPEN_SHEET", 1)
+        isVibrationOn = prefs.getBoolean("VIB_ON", true)
+        isSoundOn = prefs.getBoolean("SND_ON", true)
+        isDarkMode = prefs.getBoolean("DARK_MODE", true)
+        isProVersion = prefs.getBoolean("IS_PRO", false)
+
+        // LOAD OR GENERATE DEVICE ID (Random 1000 - 9999)
+        deviceRequestID = prefs.getInt("DEVICE_ID", 0)
+        if (deviceRequestID == 0) {
+            deviceRequestID = Random.nextInt(1000, 9999)
+            saveGlobalSettings()
+        }
+
+        applyTheme()
+    }
 
     private fun applyTheme() { if (isDarkMode) { mainLayout.setBackgroundColor(Color.parseColor("#121212")); headerBox.setBackgroundColor(Color.parseColor("#1E1E1E")); btnSettings.setColorFilter(Color.WHITE); btnHistory.setColorFilter(Color.WHITE); topd.setTextColor(Color.parseColor("#00FF00")); secd.setBackgroundColor(Color.parseColor("#2C2C2C")); secd.setTextColor(Color.parseColor("#00FFFF")) } else { mainLayout.setBackgroundColor(Color.parseColor("#FFFFFF")); headerBox.setBackgroundColor(Color.parseColor("#DDDDDD")); btnSettings.setColorFilter(Color.BLACK); btnHistory.setColorFilter(Color.BLACK); topd.setTextColor(Color.parseColor("#000000")); secd.setBackgroundColor(Color.parseColor("#EEEEEE")); secd.setTextColor(Color.parseColor("#333333")) } }
 
-    private fun showSettingsDialog() { val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null); val dialog = AlertDialog.Builder(this).setView(dialogView).create(); dialog.window?.setBackgroundDrawableResource(android.R.color.transparent); val swSound = dialogView.findViewById<Switch>(R.id.swSound); val swVib = dialogView.findViewById<Switch>(R.id.swVib); val swTheme = dialogView.findViewById<Switch>(R.id.swTheme); val btnClose = dialogView.findViewById<Button>(R.id.btnCloseSettings); swSound.isChecked = isSoundOn; swVib.isChecked = isVibrationOn; swTheme.isChecked = isDarkMode; swSound.setOnCheckedChangeListener { _, isChecked -> isSoundOn = isChecked; saveGlobalSettings() }; swVib.setOnCheckedChangeListener { _, isChecked -> isVibrationOn = isChecked; saveGlobalSettings() }; swTheme.setOnCheckedChangeListener { _, isChecked -> isDarkMode = isChecked; saveGlobalSettings(); applyTheme() }; btnClose.setOnClickListener { dialog.dismiss() }; dialog.show() }
+    private fun showSettingsDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null)
+        val dialog = AlertDialog.Builder(this).setView(dialogView).create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        val swSound = dialogView.findViewById<Switch>(R.id.swSound)
+        val swVib = dialogView.findViewById<Switch>(R.id.swVib)
+        val swTheme = dialogView.findViewById<Switch>(R.id.swTheme)
+        val btnClose = dialogView.findViewById<Button>(R.id.btnCloseSettings)
+
+        swSound.isChecked = isSoundOn
+        swVib.isChecked = isVibrationOn
+        swTheme.isChecked = isDarkMode
+
+        swSound.setOnCheckedChangeListener { _, isChecked -> isSoundOn = isChecked; saveGlobalSettings() }
+        swVib.setOnCheckedChangeListener { _, isChecked -> isVibrationOn = isChecked; saveGlobalSettings() }
+        swTheme.setOnCheckedChangeListener { _, isChecked -> isDarkMode = isChecked; saveGlobalSettings(); applyTheme() }
+        btnClose.setOnClickListener { dialog.dismiss() }
+
+        dialog.show()
+    }
     private fun performHaptic() { if (isSoundOn) try { toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150) } catch (e: Exception) {}; if (isVibrationOn) if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE)) else vibrator.vibrate(50) }
     private fun removeZero(v: Double) = DecimalFormat("#.##").format(v)
 
-    // --- CHART CLASS (UPDATED: STROKE WIDTH CHANGED TO 8f FOR VISIBILITY) ---
     class HorizontalBarChart(context: Context, val data: HashMap<String, Float>) : View(context) {
         val colors = mapOf("Food" to Color.parseColor("#FFA500"), "Rent" to Color.parseColor("#4CAF50"), "Travel" to Color.parseColor("#FFC107"), "Fuel" to Color.parseColor("#F44336"), "Shopping" to Color.parseColor("#E91E63"), "Health" to Color.parseColor("#00BCD4"), "Grocery" to Color.parseColor("#9C27B0"), "Gym" to Color.parseColor("#009688"), "Wifi" to Color.parseColor("#2196F3"), "Electricity" to Color.parseColor("#CDDC39"), "Cable" to Color.parseColor("#673AB7"), "Water" to Color.parseColor("#3F51B5"), "Drinks" to Color.parseColor("#795548"), "School" to Color.parseColor("#8BC34A"), "Tuition" to Color.parseColor("#FF9800"), "Maid" to Color.parseColor("#00BFFF"), "Custom" to Color.WHITE)
         private val paint = Paint().apply { isAntiAlias = true; style = Paint.Style.FILL }; private val textPaint = Paint().apply { isAntiAlias = true; color = Color.WHITE; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true }; private val shadowPaint = Paint().apply { isAntiAlias = true; color = Color.BLACK; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 8f }
