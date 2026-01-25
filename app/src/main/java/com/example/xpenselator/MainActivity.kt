@@ -43,8 +43,6 @@ import androidx.recyclerview.widget.RecyclerView
 import java.io.File
 import java.io.FileOutputStream
 import java.text.DecimalFormat
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
@@ -125,13 +123,14 @@ class MainActivity : AppCompatActivity() {
         expenseAdapter = ExpenseAdapter(expenseList)
         hisd.adapter = expenseAdapter
 
-        val leftSwipe = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
+        // SWIPE LOGIC: LEFT/RIGHT = DELETE ONLY (As you requested)
+        val swipeHandler = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
             override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 deleteItem(viewHolder.adapterPosition)
             }
         }
-        ItemTouchHelper(leftSwipe).attachToRecyclerView(hisd)
+        ItemTouchHelper(swipeHandler).attachToRecyclerView(hisd)
 
         // 2. RIGHT PANEL RECYCLER (Summary)
         summaryRecycler = findViewById(R.id.summaryList)
@@ -162,7 +161,6 @@ class MainActivity : AppCompatActivity() {
         chartContainer = findViewById(R.id.chartContainer)
         btnCloseChart = findViewById(R.id.btnCloseChart)
 
-        // Full History also uses standard simple item, but that's okay for the overlay
         fullHistoryAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, expenseList)
         fullHistoryList.adapter = fullHistoryAdapter
 
@@ -182,7 +180,16 @@ class MainActivity : AppCompatActivity() {
         })
 
         btnSettings.setOnClickListener { showSettingsDialog() }
+
+        // --- NEW PROJECT NAME LOGIC ---
+        // Click = Rename
         projectName.setOnClickListener { showRenameDialog() }
+        // Long Press = DELETE SHEET
+        projectName.setOnLongClickListener {
+            deleteCurrentSheet()
+            true
+        }
+
         btnHistory.setOnClickListener { performHaptic(); historyOverlay.visibility = View.VISIBLE; fullHistoryAdapter.notifyDataSetChanged() }
         btnCloseHistory.setOnClickListener { performHaptic(); historyOverlay.visibility = View.GONE }
         btnCloseChart.setOnClickListener { performHaptic(); chartOverlay.visibility = View.GONE }
@@ -194,7 +201,64 @@ class MainActivity : AppCompatActivity() {
         setupACButtonTouch()
     }
 
-    // --- COMPACT ADAPTERS (Using item_compact.xml) ---
+    // --- NEW FUNCTION: DELETE CURRENT SHEET ---
+    private fun deleteCurrentSheet() {
+        if (maxSheetID <= 1) {
+            showFastToast("Cannot delete the only sheet!")
+            return
+        }
+        performHaptic()
+
+        val currentName = getSheetName(currentSheetID)
+
+        AlertDialog.Builder(this)
+            .setTitle("Delete Sheet?")
+            .setMessage("Are you sure you want to permanently delete '$currentName'?\nSheets below will move up.")
+            .setPositiveButton("DELETE") { _, _ ->
+                performDeleteSheetLogic()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun performDeleteSheetLogic() {
+        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+
+        // Shift all data up.
+        // Example: If we delete Sheet 2, Sheet 3 data moves to Sheet 2 position, etc.
+        for (i in currentSheetID until maxSheetID) {
+            val nextTotal = prefs.getFloat("TOTAL_${i+1}", 0f)
+            val nextList = prefs.getString("LIST_${i+1}", "") ?: ""
+            val nextName = prefs.getString("NAME_${i+1}", "SHEET ${i+1}") ?: "SHEET ${i+1}"
+
+            editor.putFloat("TOTAL_$i", nextTotal)
+            editor.putString("LIST_$i", nextList)
+            editor.putString("NAME_$i", nextName)
+        }
+
+        // Remove the last sheet (since everything moved up)
+        editor.remove("TOTAL_$maxSheetID")
+        editor.remove("LIST_$maxSheetID")
+        editor.remove("NAME_$maxSheetID")
+
+        // Update Max Count
+        maxSheetID--
+        editor.putInt("MAX_SHEETS", maxSheetID)
+
+        // If we deleted the last sheet (e.g., Sheet 5 of 5), stay on new max (Sheet 4)
+        // If we deleted a middle sheet (e.g. Sheet 2 of 5), we stay on 2 (which is now the old 3)
+        if (currentSheetID > maxSheetID) {
+            currentSheetID = maxSheetID
+        }
+        editor.putInt("LAST_OPEN_SHEET", currentSheetID)
+        editor.apply()
+
+        loadSheetData(currentSheetID)
+        showFastToast("Sheet Deleted")
+    }
+
+    // --- COMPACT ADAPTERS ---
     inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
