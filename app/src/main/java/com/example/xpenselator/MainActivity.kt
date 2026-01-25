@@ -123,7 +123,7 @@ class MainActivity : AppCompatActivity() {
         expenseAdapter = ExpenseAdapter(expenseList)
         hisd.adapter = expenseAdapter
 
-        // SWIPE LOGIC: LEFT/RIGHT = DELETE ONLY (As you requested)
+        // SWIPE LOGIC: LEFT/RIGHT = DELETE ONLY
         val swipeHandler = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
             override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
@@ -181,10 +181,8 @@ class MainActivity : AppCompatActivity() {
 
         btnSettings.setOnClickListener { showSettingsDialog() }
 
-        // --- NEW PROJECT NAME LOGIC ---
-        // Click = Rename
+        // --- PROJECT NAME CLICK LOGIC ---
         projectName.setOnClickListener { showRenameDialog() }
-        // Long Press = DELETE SHEET
         projectName.setOnLongClickListener {
             deleteCurrentSheet()
             true
@@ -201,22 +199,18 @@ class MainActivity : AppCompatActivity() {
         setupACButtonTouch()
     }
 
-    // --- NEW FUNCTION: DELETE CURRENT SHEET ---
+    // --- DELETE CURRENT SHEET LOGIC ---
     private fun deleteCurrentSheet() {
         if (maxSheetID <= 1) {
             showFastToast("Cannot delete the only sheet!")
             return
         }
         performHaptic()
-
         val currentName = getSheetName(currentSheetID)
-
         AlertDialog.Builder(this)
             .setTitle("Delete Sheet?")
             .setMessage("Are you sure you want to permanently delete '$currentName'?\nSheets below will move up.")
-            .setPositiveButton("DELETE") { _, _ ->
-                performDeleteSheetLogic()
-            }
+            .setPositiveButton("DELETE") { _, _ -> performDeleteSheetLogic() }
             .setNegativeButton("Cancel", null)
             .show()
     }
@@ -224,36 +218,22 @@ class MainActivity : AppCompatActivity() {
     private fun performDeleteSheetLogic() {
         val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
         val editor = prefs.edit()
-
-        // Shift all data up.
-        // Example: If we delete Sheet 2, Sheet 3 data moves to Sheet 2 position, etc.
         for (i in currentSheetID until maxSheetID) {
             val nextTotal = prefs.getFloat("TOTAL_${i+1}", 0f)
             val nextList = prefs.getString("LIST_${i+1}", "") ?: ""
             val nextName = prefs.getString("NAME_${i+1}", "SHEET ${i+1}") ?: "SHEET ${i+1}"
-
             editor.putFloat("TOTAL_$i", nextTotal)
             editor.putString("LIST_$i", nextList)
             editor.putString("NAME_$i", nextName)
         }
-
-        // Remove the last sheet (since everything moved up)
         editor.remove("TOTAL_$maxSheetID")
         editor.remove("LIST_$maxSheetID")
         editor.remove("NAME_$maxSheetID")
-
-        // Update Max Count
         maxSheetID--
         editor.putInt("MAX_SHEETS", maxSheetID)
-
-        // If we deleted the last sheet (e.g., Sheet 5 of 5), stay on new max (Sheet 4)
-        // If we deleted a middle sheet (e.g. Sheet 2 of 5), we stay on 2 (which is now the old 3)
-        if (currentSheetID > maxSheetID) {
-            currentSheetID = maxSheetID
-        }
+        if (currentSheetID > maxSheetID) { currentSheetID = maxSheetID }
         editor.putInt("LAST_OPEN_SHEET", currentSheetID)
         editor.apply()
-
         loadSheetData(currentSheetID)
         showFastToast("Sheet Deleted")
     }
@@ -437,8 +417,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sharePdfReport() {
-        if(expenseList.isEmpty()) { showFastToast("Nothing to Print!"); return }
+        if (expenseList.isEmpty()) { showFastToast("Nothing to Print!"); return }
         performHaptic()
+
+        val input = EditText(this)
+        input.setText("BYTESKULL FINANCE")
+        input.setTextColor(Color.WHITE)
+        input.selectAll()
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Enter Report Title")
+            .setView(input)
+            .setPositiveButton("GENERATE") { _, _ ->
+                val customTitle = input.text.toString().ifEmpty { "EXPENSE REPORT" }
+                generateAndSharePdf(customTitle)
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.background_dark)
+        dialog.show()
+    }
+
+    private fun generateAndSharePdf(title: String) {
         showFastToast("Generating PDF Report...")
         val pdfDocument = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
@@ -453,7 +453,7 @@ class MainActivity : AppCompatActivity() {
             val page = pdfDocument.startPage(pageInfo); val canvas = page.canvas
             canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
             var y = 60f
-            canvas.drawText("BYTESKULL FINANCE", 297f, y, paintHeader); y += 30f
+            canvas.drawText(title.uppercase(), 297f, y, paintHeader); y += 30f
             canvas.drawText("SHEET: ${getSheetName(currentSheetID)}", 297f, y, paintGreen); y += 40f
             canvas.drawLine(40f, y, 555f, y, paintLine); y += 30f
             val end = min(i + itemsPerPage, totalItems)
@@ -644,9 +644,10 @@ class MainActivity : AppCompatActivity() {
     private fun performHaptic() { if (isSoundOn) try { toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150) } catch (e: Exception) {}; if (isVibrationOn) if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE)) else vibrator.vibrate(50) }
     private fun removeZero(v: Double) = DecimalFormat("#.##").format(v)
 
+    // --- CHART CLASS (UPDATED: STROKE WIDTH CHANGED TO 8f FOR VISIBILITY) ---
     class HorizontalBarChart(context: Context, val data: HashMap<String, Float>) : View(context) {
         val colors = mapOf("Food" to Color.parseColor("#FFA500"), "Rent" to Color.parseColor("#4CAF50"), "Travel" to Color.parseColor("#FFC107"), "Fuel" to Color.parseColor("#F44336"), "Shopping" to Color.parseColor("#E91E63"), "Health" to Color.parseColor("#00BCD4"), "Grocery" to Color.parseColor("#9C27B0"), "Gym" to Color.parseColor("#009688"), "Wifi" to Color.parseColor("#2196F3"), "Electricity" to Color.parseColor("#CDDC39"), "Cable" to Color.parseColor("#673AB7"), "Water" to Color.parseColor("#3F51B5"), "Drinks" to Color.parseColor("#795548"), "School" to Color.parseColor("#8BC34A"), "Tuition" to Color.parseColor("#FF9800"), "Maid" to Color.parseColor("#00BFFF"), "Custom" to Color.WHITE)
-        private val paint = Paint().apply { isAntiAlias = true; style = Paint.Style.FILL }; private val textPaint = Paint().apply { isAntiAlias = true; color = Color.WHITE; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true }; private val shadowPaint = Paint().apply { isAntiAlias = true; color = Color.BLACK; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 3f }
+        private val paint = Paint().apply { isAntiAlias = true; style = Paint.Style.FILL }; private val textPaint = Paint().apply { isAntiAlias = true; color = Color.WHITE; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true }; private val shadowPaint = Paint().apply { isAntiAlias = true; color = Color.BLACK; textSize = 35f; textAlign = Paint.Align.LEFT; isFakeBoldText = true; style = Paint.Style.STROKE; strokeWidth = 8f }
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) { setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (data.size * 110 + 80)) }
         override fun onDraw(canvas: Canvas) { super.onDraw(canvas); val maxVal = data.values.maxOrNull() ?: 1f; var y = 40f; val sortedData = data.toList().sortedByDescending { it.second }
             for((key, value) in sortedData) { val barWidth = (value / maxVal) * (width - 80f); val cleanWidth = max(barWidth, 10f); paint.color = colors.getOrElse(key) { Color.WHITE }; canvas.drawRect(40f, y, 40f + cleanWidth, y + 80f, paint); val label = "$key: ₹${value.toInt()}"; val textX = 60f; val textY = y + 52f; canvas.drawText(label, textX, textY, shadowPaint); canvas.drawText(label, textX, textY, textPaint); y += 110f } }
