@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.provider.Settings // NEW IMPORT FOR HARDWARE ID
 import android.text.SpannableString
 import android.text.style.RelativeSizeSpan
 import android.view.GestureDetector
@@ -47,7 +48,6 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.random.Random
 
 class MainActivity : AppCompatActivity() {
 
@@ -211,13 +211,28 @@ class MainActivity : AppCompatActivity() {
         setupACButtonTouch()
     }
 
-    // --- 1. THE SECURE HASH LOGIC ---
+    // --- 1. THE SECURE HASH LOGIC (Verification) ---
     private fun generateSecureCode(id: Int): Int {
         val rawData = SECRET_SALT + id
         return abs(rawData.hashCode()) % 1000000
     }
 
-    // --- 2. THE TELEGRAM UPSELL DIALOG ---
+    // --- 2. HARDWARE BINDING (The "Unique Math") ---
+    private fun getHardwareID(): Int {
+        try {
+            // Get the unique motherboard ID (ANDROID_ID)
+            val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "random"
+
+            // "Math Magic": Convert "a1b2c3..." into a simple 4-digit number (1000-9999)
+            val hash = abs(androidId.hashCode())
+            return (hash % 9000) + 1000
+
+        } catch (e: Exception) {
+            return 9999 // Fallback if something fails
+        }
+    }
+
+    // --- 3. THE TELEGRAM UPSELL DIALOG ---
     private fun showUpsellDialog() {
         performHaptic()
 
@@ -225,7 +240,7 @@ class MainActivity : AppCompatActivity() {
         layout.orientation = LinearLayout.VERTICAL
         layout.setPadding(50, 40, 50, 10)
 
-        // Show the User their unique ID
+        // Show the PERMANENT Hardware ID
         val idText = TextView(this)
         idText.text = "Device ID: $deviceRequestID"
         idText.setTextColor(Color.YELLOW)
@@ -764,7 +779,7 @@ class MainActivity : AppCompatActivity() {
         topd.text = "₹${removeZero(grandTotal)}"; projectName.text = getSheetName(sheetId); expenseAdapter.notifyDataSetChanged(); calculateCategoryTotals(); secd.text = "0"
     }
 
-    // --- 4. SAVE/LOAD PRO STATUS AND DEVICE ID ---
+    // --- 4. SAVE/LOAD PRO STATUS AND HARDWARE ID ---
     private fun saveGlobalSettings() {
         val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit()
         prefs.putInt("MAX_SHEETS", maxSheetID)
@@ -773,7 +788,7 @@ class MainActivity : AppCompatActivity() {
         prefs.putBoolean("SND_ON", isSoundOn)
         prefs.putBoolean("DARK_MODE", isDarkMode)
         prefs.putBoolean("IS_PRO", isProVersion)
-        prefs.putInt("DEVICE_ID", deviceRequestID) // Save the ID so it doesn't change
+        // Note: We don't need to save DEVICE_ID anymore because we read it from Hardware!
         prefs.apply()
     }
 
@@ -786,12 +801,8 @@ class MainActivity : AppCompatActivity() {
         isDarkMode = prefs.getBoolean("DARK_MODE", true)
         isProVersion = prefs.getBoolean("IS_PRO", false)
 
-        // LOAD OR GENERATE DEVICE ID (Random 1000 - 9999)
-        deviceRequestID = prefs.getInt("DEVICE_ID", 0)
-        if (deviceRequestID == 0) {
-            deviceRequestID = Random.nextInt(1000, 9999)
-            saveGlobalSettings()
-        }
+        // GET THE PERMANENT HARDWARE ID
+        deviceRequestID = getHardwareID()
 
         applyTheme()
     }
