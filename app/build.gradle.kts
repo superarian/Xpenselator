@@ -10,7 +10,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.xpenselator"
+        applicationId = "com.byteskull.xpenselator"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
