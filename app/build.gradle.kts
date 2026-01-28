@@ -5,16 +5,14 @@ plugins {
 
 android {
     namespace = "com.example.xpenselator"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 35 // FIXED: Changed from preview 36 to stable 35
 
     defaultConfig {
         applicationId = "com.byteskull.xpenselator"
         minSdk = 24
-        targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 35
+        versionCode = 2        // INCREASED
+        versionName = "1.1"    // UPDATED
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
