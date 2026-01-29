@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.graphics.pdf.PdfDocument
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -108,9 +109,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Disable system auto-theme to handle it manually
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-
         setContentView(R.layout.activity_main)
 
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
@@ -126,16 +125,14 @@ class MainActivity : AppCompatActivity() {
         secd = findViewById(R.id.inputDisplay)
         keypadArea = findViewById(R.id.keypadArea)
 
-        // --- FIXED CRASH HERE: Removed extra '.parent' calls ---
         val hList = findViewById<View>(R.id.historyList)
-        historyContainer = hList.parent as LinearLayout // <--- FIXED LINE
+        historyContainer = hList.parent as LinearLayout
 
         val kArea = findViewById<View>(R.id.keypadArea)
-        keypadContainer = kArea.parent as LinearLayout // <--- FIXED LINE
+        keypadContainer = kArea.parent as LinearLayout
 
         val cCustom = findViewById<View>(R.id.catCustom)
-        catLayout = cCustom.parent as LinearLayout // <--- FIXED LINE
-        // -----------------------------------------------------------------------
+        catLayout = cCustom.parent as LinearLayout
 
         hisd = findViewById(R.id.historyList)
         hisd.layoutManager = LinearLayoutManager(this)
@@ -172,13 +169,18 @@ class MainActivity : AppCompatActivity() {
         chartContainer = findViewById(R.id.chartContainer)
         btnCloseChart = findViewById(R.id.btnCloseChart)
 
-        fullHistoryAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, expenseList)
+        // Time Machine Text Color Logic
+        fullHistoryAdapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, expenseList) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent) as TextView
+                view.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+                return view
+            }
+        }
         fullHistoryList.adapter = fullHistoryAdapter
 
-        // Load Settings & Apply Theme Instantly
         loadGlobalSettings()
         applyThemeManual()
-
         loadSheetData(currentSheetID)
 
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -208,71 +210,102 @@ class MainActivity : AppCompatActivity() {
         setupACButtonTouch()
     }
 
-    // --- MANUAL THEME ENGINE ---
+    // --- REFINED MANUAL THEME ENGINE ---
     private fun applyThemeManual() {
         if (isDarkMode) {
-            // DARK MODE COLORS
+            // --- DARK MODE ---
             window.statusBarColor = Color.BLACK
             rootView.setBackgroundColor(Color.BLACK)
             headerBox.setBackgroundColor(Color.parseColor("#1E1E1E"))
             topd.setTextColor(Color.GREEN)
             btnSettings.setColorFilter(Color.WHITE)
             btnHistory.setColorFilter(Color.LTGRAY)
-            historyContainer.background.setTint(Color.parseColor("#1A1A1A"))
+            historyContainer.background.setTint(Color.parseColor("#1A1A1A")) // List Area Dark
             keypadContainer.background.setTint(Color.parseColor("#050505"))
 
-            // Middle Display (Always Dark)
-            secd.setBackgroundColor(Color.parseColor("#2C2C2C"))
+            secd.setBackgroundColor(Color.parseColor("#2C2C2C")) // Input Dark
             secd.setTextColor(Color.CYAN)
 
-            // Reset Buttons to Cyber Style
+            // Fix Buttons for Dark Mode
             for (i in 0 until keypadArea.childCount) {
                 val child = keypadArea.getChildAt(i)
                 if (child is Button) {
-                    child.setBackgroundResource(if(child.text == "=" || child.text == "AC" || child.text == "0") R.drawable.btn_spb else R.drawable.btn_cyber)
-                    child.background.setTintList(null) // Remove tint
+                    val isSpecial = child.text == "=" || child.text == "AC" || child.text == "0"
+                    child.setBackgroundResource(if(isSpecial) R.drawable.btn_spb else R.drawable.btn_cyber)
+                    child.background.setTintList(null)
+
+                    // Fix 1: White Operators
+                    if ("+-×÷".contains(child.text)) {
+                        child.setTextColor(Color.WHITE)
+                    }
+                    // Fix 2: Green '0'
+                    else if (child.text == "0") {
+                        child.setTextColor(Color.GREEN)
+                    }
+                    else if (!isSpecial && child.text != "⌫") {
+                        child.setTextColor(Color.WHITE)
+                    }
                 }
             }
 
         } else {
-            // LIGHT MODE COLORS (Custom Design)
+            // --- LIGHT MODE ---
             window.statusBarColor = Color.parseColor("#E0E0E0")
             rootView.setBackgroundColor(Color.parseColor("#F5F5F5"))
+
+            // Top 2 Displays -> WHITE
             headerBox.setBackgroundColor(Color.WHITE)
-            topd.setTextColor(Color.parseColor("#006400")) // Dark Green for visibility
+            topd.setTextColor(Color.parseColor("#006400"))
+            secd.setBackgroundColor(Color.WHITE)
+            secd.setTextColor(Color.BLACK)
+
+            // Middle Big Screen (List) -> BLACK (Requested)
+            historyContainer.background.setTint(Color.BLACK)
+
             btnSettings.setColorFilter(Color.DKGRAY)
             btnHistory.setColorFilter(Color.DKGRAY)
-            historyContainer.background.setTint(Color.WHITE)
             keypadContainer.background.setTint(Color.parseColor("#E0E0E0"))
 
-            // Middle Display (STAYS DARK as requested)
-            secd.setBackgroundColor(Color.BLACK)
-            secd.setTextColor(Color.CYAN)
-
-            // Buttons turn Light/White
+            // Fix Buttons for Light Mode (Outlines)
             for (i in 0 until keypadArea.childCount) {
                 val child = keypadArea.getChildAt(i)
                 if (child is Button) {
-                    child.setBackgroundResource(R.drawable.btn_cyber) // Keep shape
-                    child.background.setTint(Color.WHITE) // Tint White
+                    val isSpecial = child.text == "=" || child.text == "AC" || child.text == "0"
+                    val bg = ContextCompat.getDrawable(this, if(isSpecial) R.drawable.btn_spb else R.drawable.btn_cyber)?.mutate() as? GradientDrawable
 
-                    // Fix text visibility on white buttons
-                    if (child.text == "AC" || child.text == "⌫") child.setTextColor(Color.RED)
-                    else if (child.text == "=") { child.background.setTint(Color.parseColor("#E0FFE0")); child.setTextColor(Color.parseColor("#00AA00")) }
-                    else if ("+-×÷".contains(child.text)) child.setTextColor(Color.BLUE)
-                    else child.setTextColor(Color.BLACK)
+                    bg?.setColor(Color.WHITE) // Fill inside with white
+
+                    // Borders
+                    if (child.text == "AC") {
+                        bg?.setStroke(3, Color.RED)
+                        child.setTextColor(Color.RED)
+                    } else if (child.text == "0") {
+                        bg?.setStroke(3, Color.GREEN)
+                        child.setTextColor(Color.BLACK)
+                    } else if (child.text == "=") {
+                        bg?.setStroke(3, Color.GREEN)
+                        bg?.setColor(Color.parseColor("#E0FFE0")) // Light Green Fill
+                        child.setTextColor(Color.parseColor("#00AA00"))
+                    } else {
+                        // Black Border for others
+                        bg?.setStroke(2, Color.BLACK)
+
+                        if ("+-×÷".contains(child.text)) child.setTextColor(Color.BLUE)
+                        else if (child.text == "⌫") child.setTextColor(Color.RED)
+                        else child.setTextColor(Color.BLACK)
+                    }
+                    child.background = bg
                 }
             }
         }
-
         expenseAdapter.notifyDataSetChanged()
+        summaryAdapter.notifyDataSetChanged()
     }
 
     private fun getDynamicTextColor(): Int {
         return if (isDarkMode) Color.WHITE else Color.BLACK
     }
 
-    // --- REFINED SETTINGS DIALOG ---
     private fun showSettingsDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null)
         val dialog = AlertDialog.Builder(this).setView(dialogView).create()
@@ -282,11 +315,10 @@ class MainActivity : AppCompatActivity() {
         val swVib = dialogView.findViewById<Switch>(R.id.swVib)
         val swTheme = dialogView.findViewById<Switch>(R.id.swTheme)
 
-        // Theme Dialog Colors
         val bg = dialogView as LinearLayout
         if(!isDarkMode) {
             bg.background.setTint(Color.WHITE)
-            (bg.getChildAt(0) as TextView).setTextColor(Color.BLACK) // Title
+            (bg.getChildAt(0) as TextView).setTextColor(Color.BLACK)
             swSound.setTextColor(Color.BLACK)
             swVib.setTextColor(Color.BLACK)
             swTheme.setTextColor(Color.BLACK)
@@ -312,13 +344,11 @@ class MainActivity : AppCompatActivity() {
         swSound.setOnCheckedChangeListener { _, c -> isSoundOn = c; saveGlobalSettings() }
         swVib.setOnCheckedChangeListener { _, c -> isVibrationOn = c; saveGlobalSettings() }
 
-        // THEME TOGGLE: Calls manual update instead of restart
         swTheme.setOnCheckedChangeListener { _, c ->
             isDarkMode = c
             saveGlobalSettings()
-            applyThemeManual() // Instant update
+            applyThemeManual()
 
-            // Update dialog colors instantly
             if(!isDarkMode) {
                 bg.background.setTint(Color.WHITE)
                 (bg.getChildAt(0) as TextView).setTextColor(Color.BLACK)
@@ -335,12 +365,21 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // --- UTILITY DASHBOARD ---
     private fun showUtilityDashboard() {
         val options = arrayOf("💱 Currency Converter", "📏 Distance (Km, M, Ft)", "⚖️ Weight Converter")
+
+        val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, options) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent) as TextView
+                view.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+                view.textSize = 18f
+                return view
+            }
+        }
+
         AlertDialog.Builder(this)
             .setTitle("UTILITY STATION")
-            .setItems(options) { _, which ->
+            .setAdapter(adapter) { _, which ->
                 when(which) {
                     0 -> showCurrencyTool()
                     1 -> showDistanceTool()
@@ -349,7 +388,6 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Close", null)
             .create().apply {
-                // FORCE BACKGROUND COLOR
                 window?.setBackgroundDrawableResource(if (isDarkMode) android.R.color.background_dark else android.R.color.background_light)
                 listView.setBackgroundColor(if(isDarkMode) Color.parseColor("#1E1E1E") else Color.WHITE)
                 show()
@@ -402,15 +440,15 @@ class MainActivity : AppCompatActivity() {
         val input = EditText(this); input.hint = "Enter Value"; input.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         input.setTextColor(textColor); input.setHintTextColor(Color.LTGRAY); layout.addView(input)
 
-        val resText = TextView(this); resText.text = "---"; resText.textSize = 22f; resText.setTextColor(if(isDarkMode) Color.parseColor("#FFA500") else Color.parseColor("#FF8800")); resText.gravity = Gravity.CENTER; resText.setPadding(0, 30, 0, 0)
+        val resText = TextView(this); resText.text = "---"; resText.textSize = 22f;
+        resText.setTextColor(if(isDarkMode) Color.YELLOW else Color.parseColor("#FF8800"))
+        resText.gravity = Gravity.CENTER; resText.setPadding(0, 30, 0, 0)
 
-        // Helper function for pairs
         fun addPair(btn1Txt: String, factor1: Double, btn2Txt: String, factor2: Double, unit1: String, unit2: String) {
             val box = LinearLayout(this); box.orientation = LinearLayout.HORIZONTAL; box.weightSum = 2f; box.setPadding(0, 20, 0, 0)
             val b1 = Button(this); b1.text = btn1Txt; b1.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             val b2 = Button(this); b2.text = btn2Txt; b2.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
-            // Fix button colors in light mode
             if(!isDarkMode) { b1.setBackgroundColor(Color.LTGRAY); b2.setBackgroundColor(Color.LTGRAY); b1.setTextColor(Color.BLACK); b2.setTextColor(Color.BLACK) }
 
             b1.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * factor1)} $unit2" } }
@@ -435,13 +473,14 @@ class MainActivity : AppCompatActivity() {
         val input = EditText(this); input.hint = "Enter Weight"; input.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         input.setTextColor(textColor); input.setHintTextColor(Color.LTGRAY); layout.addView(input)
 
-        val resText = TextView(this); resText.text = "---"; resText.textSize = 22f; resText.setTextColor(if(isDarkMode) Color.parseColor("#FFA500") else Color.parseColor("#FF8800")); resText.gravity = Gravity.CENTER; resText.setPadding(0, 30, 0, 0)
+        val resText = TextView(this); resText.text = "---"; resText.textSize = 22f;
+        resText.setTextColor(if(isDarkMode) Color.YELLOW else Color.parseColor("#FF8800"))
+        resText.gravity = Gravity.CENTER; resText.setPadding(0, 30, 0, 0)
 
         val btnBox = LinearLayout(this); btnBox.orientation = LinearLayout.HORIZONTAL; btnBox.weightSum = 2f; btnBox.setPadding(0, 20, 0, 0)
         val btn1 = Button(this); btn1.text = "Kg ➡ Lbs"; btn1.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         val btn2 = Button(this); btn2.text = "Lbs ➡ Kg"; btn2.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
-        // Fix button colors in light mode
         if(!isDarkMode) { btn1.setBackgroundColor(Color.LTGRAY); btn2.setBackgroundColor(Color.LTGRAY); btn1.setTextColor(Color.BLACK); btn2.setTextColor(Color.BLACK) }
 
         btn1.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * 2.20462)} Lbs" } }
@@ -452,7 +491,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- PDF EXPORT (With Bar Graph) ---
+    // --- PDF EXPORT ---
     private fun sharePdfReport() {
         if (!isProVersion) { showUpsellDialog(); return }
         performHaptic()
@@ -469,7 +508,6 @@ class MainActivity : AppCompatActivity() {
 
         val subHeader = TextView(this); subHeader.text = "\nSelect Sheets to Print:"; subHeader.setTextColor(Color.CYAN); layout.addView(subHeader)
 
-        // Dynamic Checkboxes
         val checkBoxList = ArrayList<CheckBox>()
         for (i in 1..maxSheetID) {
             val cb = CheckBox(this)
@@ -623,8 +661,11 @@ class MainActivity : AppCompatActivity() {
     private fun saveSheetData(sheetId: Int) { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit(); prefs.putFloat("TOTAL_$sheetId", grandTotal.toFloat()); prefs.putString("LIST_$sheetId", expenseList.joinToString("#")); prefs.apply() }
     private fun loadSheetData(sheetId: Int) { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); val listString = prefs.getString("LIST_$sheetId", ""); expenseList.clear(); grandTotal = 0.0; if (!listString.isNullOrEmpty()) { val items = listString.split("#"); expenseList.addAll(items); for (item in items) { grandTotal += item.substringAfter("₹").trim().toDoubleOrNull() ?: 0.0 } }; topd.text = "₹${removeZero(grandTotal)}"; projectName.text = getSheetName(sheetId); expenseAdapter.notifyDataSetChanged(); calculateCategoryTotals(); secd.text = "0" }
 
-    inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() { inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }; override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder { return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false)) }; override fun onBindViewHolder(holder: ViewHolder, position: Int) { holder.textView.text = data[position]; holder.textView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK) }; override fun getItemCount() = data.size }
-    inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() { inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }; override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder { return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false)) }; override fun onBindViewHolder(holder: ViewHolder, position: Int) { holder.textView.text = data[position]; holder.textView.setTextColor(if(isDarkMode) Color.CYAN else Color.BLUE) }; override fun getItemCount() = data.size }
+    inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() { inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }; override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder { return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false)) }; override fun onBindViewHolder(holder: ViewHolder, position: Int) { holder.textView.text = data[position];
+        // --- LIST TEXT COLOR FIX: Always White if container is Dark (even in Light mode)
+        holder.textView.setTextColor(if(isDarkMode || !isDarkMode) Color.WHITE else Color.BLACK) }; override fun getItemCount() = data.size }
+
+    inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() { inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }; override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder { return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false)) }; override fun onBindViewHolder(holder: ViewHolder, position: Int) { holder.textView.text = data[position]; holder.textView.setTextColor(if(isDarkMode) Color.CYAN else Color.CYAN) }; override fun getItemCount() = data.size }
 
     private fun addExpenseItem(name: String, emoji: String, priceVal: Double) { grandTotal += priceVal; topd.text = "₹${removeZero(grandTotal)}"; expenseList.add("$emoji $name: ₹${removeZero(priceVal)}"); expenseAdapter.notifyDataSetChanged(); fullHistoryAdapter.notifyDataSetChanged(); calculateCategoryTotals(); saveSheetData(currentSheetID); if (expenseList.isNotEmpty()) { hisd.smoothScrollToPosition(expenseList.size - 1) }; secd.text = "Saved!"; isNewEntry = true }
     private fun deleteItem(pos: Int) { performHaptic(); val item = expenseList[pos]; val price = item.substringAfter("₹").toDoubleOrNull() ?: 0.0; grandTotal -= price; if(grandTotal < 0) grandTotal = 0.0; topd.text = "₹${removeZero(grandTotal)}"; expenseList.removeAt(pos); expenseAdapter.notifyItemRemoved(pos); fullHistoryAdapter.notifyDataSetChanged(); calculateCategoryTotals(); saveSheetData(currentSheetID); showFastToast("Deleted") }
@@ -632,7 +673,17 @@ class MainActivity : AppCompatActivity() {
     private fun calculateCategoryTotals() { val totals = HashMap<String, Double>(); for (item in expenseList) { try { val parts = item.split(":"); if (parts.size == 2) { val catName = parts[0].trim(); val price = parts[1].replace("₹", "").trim().toDoubleOrNull() ?: 0.0; totals[catName] = totals.getOrDefault(catName, 0.0) + price } } catch (e: Exception) { } }; summaryList.clear(); for ((name, total) in totals) { summaryList.add("$name: ₹${removeZero(total)}") }; summaryAdapter.notifyDataSetChanged() }
 
     private fun setupCategoryButtons() {
-        findViewById<Button>(R.id.catCustom).setOnClickListener { performHaptic(); val rawPrice = secd.text.toString(); if (rawPrice == "Saved!" || rawPrice == "0" || rawPrice.isEmpty()) return@setOnClickListener; val value = evaluateExpression(rawPrice); if (value == 0.0) return@setOnClickListener; val input = EditText(this); input.hint = "Item Name"; input.setTextColor(getDynamicTextColor()); AlertDialog.Builder(this).setTitle("Custom Item").setView(input).setPositiveButton("ADD") { _, _ -> addExpenseItem(if(input.text.toString().isEmpty()) "Custom" else input.text.toString(), "📝", value) }.create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() } }
+        findViewById<Button>(R.id.catCustom).setOnClickListener { performHaptic(); val rawPrice = secd.text.toString(); if (rawPrice == "Saved!" || rawPrice == "0" || rawPrice.isEmpty()) return@setOnClickListener; val value = evaluateExpression(rawPrice); if (value == 0.0) return@setOnClickListener; val input = EditText(this); input.hint = "Item Name"; input.setTextColor(getDynamicTextColor());
+
+            val titleView = TextView(this)
+            titleView.text = "Custom Item"
+            titleView.textSize = 20f
+            titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK)
+            titleView.setPadding(20, 20, 20, 20)
+            titleView.typeface = Typeface.DEFAULT_BOLD
+            titleView.gravity = Gravity.CENTER
+
+            AlertDialog.Builder(this).setCustomTitle(titleView).setView(input).setPositiveButton("ADD") { _, _ -> addExpenseItem(if(input.text.toString().isEmpty()) "Custom" else input.text.toString(), "📝", value) }.create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() } }
         val cats = mapOf(R.id.catFood to Pair("Food", "🍔"), R.id.catRent to Pair("Rent", "🏠"), R.id.catTravel to Pair("Travel", "🚕"), R.id.catFuel to Pair("Fuel", "⛽"), R.id.catShop to Pair("Shopping", "🛍️"), R.id.catMed to Pair("Health", "💊"), R.id.catGrocery to Pair("Grocery", "🛒"), R.id.catGym to Pair("Gym", "💪"), R.id.catWifi to Pair("Wifi", "🛜"), R.id.catPower to Pair("Electricity", "⚡"), R.id.catCable to Pair("Cable", "📺"), R.id.catWater to Pair("Water", "💧"), R.id.catRefresh to Pair("Drinks", "🍺"), R.id.catSchool to Pair("School", "🏫"), R.id.catTuition to Pair("Tuition", "📚"), R.id.catHelp to Pair("Maid", "👩"))
         for ((id, pair) in cats) { val btn = findViewById<Button>(id); val content = btn.text.toString(); val newlineIndex = content.indexOf('\n'); if (newlineIndex > 0) { val span = SpannableString(content); span.setSpan(RelativeSizeSpan(2.0f), 0, newlineIndex, 0); btn.text = span }; btn.setOnClickListener { performHaptic(); val rawExpression = secd.text.toString(); if (rawExpression == "Saved!" || rawExpression.isEmpty()) return@setOnClickListener; val value = evaluateExpression(rawExpression); if (value == 0.0) return@setOnClickListener; addExpenseItem(pair.first, pair.second, value) } }
     }
