@@ -450,7 +450,9 @@ class MainActivity : AppCompatActivity() {
         val layout = LinearLayout(this); layout.orientation = LinearLayout.VERTICAL; layout.setPadding(60, 50, 60, 30)
         val textColor = getDynamicTextColor()
         val input = EditText(this); input.hint = "Enter Weight"; input.setTextColor(textColor); input.setHintTextColor(Color.LTGRAY); layout.addView(input)
-        val resText = TextView(this); resText.text = "---"; resText.textSize = 22f; resText.setTextColor(if(isDarkMode) Color.YELLOW else Color.parseColor("#FF8800")); resText.gravity = Gravity.CENTER; resText.setPadding(0, 30, 0, 0)
+        val resText = TextView(this); resText.text = "---"; resText.textSize = 22f;
+        resText.setTextColor(if(isDarkMode) Color.YELLOW else Color.parseColor("#FF8800"))
+        resText.gravity = Gravity.CENTER; resText.setPadding(0, 30, 0, 0)
 
         val btnBox = LinearLayout(this); btnBox.orientation = LinearLayout.HORIZONTAL; btnBox.weightSum = 2f; btnBox.setPadding(0, 20, 0, 0)
         val btn1 = Button(this); btn1.text = "Kg ➡ Lbs"; btn1.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -462,9 +464,23 @@ class MainActivity : AppCompatActivity() {
         btn1.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * 2.20462)} Lbs" } }
         btn2.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v / 2.20462)} Kg" } }
         btnBox.addView(btn1); btnBox.addView(btn2); layout.addView(btnBox); layout.addView(resText)
-        AlertDialog.Builder(this).setTitle("⚖️ Weight").setView(layout).setNegativeButton("Close", null).create().apply {
-            window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show()
-        }
+
+        // --- FIXED: Custom Title + Back Button for Weight Tool ---
+        val titleView = TextView(this)
+        titleView.text = "⚖️ Weight"
+        titleView.textSize = 20f
+        titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK)
+        titleView.setPadding(40, 40, 40, 20)
+        titleView.gravity = Gravity.CENTER
+
+        AlertDialog.Builder(this)
+            .setCustomTitle(titleView)
+            .setView(layout)
+            .setNegativeButton("BACK") { _, _ -> showUtilityDashboard() }
+            .create().apply {
+                window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+                show()
+            }
     }
 
     private fun sharePdfReport() {
@@ -618,7 +634,6 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = data.size
     }
 
-    // --- FIXED SUMMARY ADAPTER (Using split view) ---
     inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val nameView: TextView = view.findViewById(R.id.itemName)
