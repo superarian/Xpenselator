@@ -220,10 +220,13 @@ class MainActivity : AppCompatActivity() {
             topd.setTextColor(Color.GREEN)
             btnSettings.setColorFilter(Color.WHITE)
             btnHistory.setColorFilter(Color.LTGRAY)
-            historyContainer.background.setTint(Color.parseColor("#1A1A1A")) // List Area Dark
+            historyContainer.background.setTint(Color.parseColor("#1A1A1A"))
             keypadContainer.background.setTint(Color.parseColor("#050505"))
 
-            secd.setBackgroundColor(Color.parseColor("#2C2C2C")) // Input Dark
+            // FIX 3: Time Machine Background Dark
+            historyOverlay.setBackgroundColor(Color.parseColor("#151515"))
+
+            secd.setBackgroundColor(Color.parseColor("#2C2C2C"))
             secd.setTextColor(Color.CYAN)
 
             // Fix Buttons for Dark Mode
@@ -234,11 +237,9 @@ class MainActivity : AppCompatActivity() {
                     child.setBackgroundResource(if(isSpecial) R.drawable.btn_spb else R.drawable.btn_cyber)
                     child.background.setTintList(null)
 
-                    // Fix 1: White Operators
                     if ("+-×÷".contains(child.text)) {
                         child.setTextColor(Color.WHITE)
                     }
-                    // Fix 2: Green '0'
                     else if (child.text == "0") {
                         child.setTextColor(Color.GREEN)
                     }
@@ -253,48 +254,49 @@ class MainActivity : AppCompatActivity() {
             window.statusBarColor = Color.parseColor("#E0E0E0")
             rootView.setBackgroundColor(Color.parseColor("#F5F5F5"))
 
-            // Top 2 Displays -> WHITE
             headerBox.setBackgroundColor(Color.WHITE)
             topd.setTextColor(Color.parseColor("#006400"))
             secd.setBackgroundColor(Color.WHITE)
             secd.setTextColor(Color.BLACK)
 
-            // Middle Big Screen (List) -> BLACK (Requested)
+            // Middle Big Screen (List) -> BLACK
             historyContainer.background.setTint(Color.BLACK)
+
+            // FIX 3: Time Machine Background White (so black text is visible)
+            historyOverlay.setBackgroundColor(Color.WHITE)
 
             btnSettings.setColorFilter(Color.DKGRAY)
             btnHistory.setColorFilter(Color.DKGRAY)
             keypadContainer.background.setTint(Color.parseColor("#E0E0E0"))
 
-            // Fix Buttons for Light Mode (Outlines)
+            // FIX 1 & 2: Explicitly Draw Borders
             for (i in 0 until keypadArea.childCount) {
                 val child = keypadArea.getChildAt(i)
                 if (child is Button) {
-                    val isSpecial = child.text == "=" || child.text == "AC" || child.text == "0"
-                    val bg = ContextCompat.getDrawable(this, if(isSpecial) R.drawable.btn_spb else R.drawable.btn_cyber)?.mutate() as? GradientDrawable
+                    val gd = GradientDrawable()
+                    gd.shape = GradientDrawable.RECTANGLE
+                    gd.cornerRadius = 20f // approx 8dp
+                    gd.setColor(Color.WHITE) // Inside fill
 
-                    bg?.setColor(Color.WHITE) // Fill inside with white
-
-                    // Borders
                     if (child.text == "AC") {
-                        bg?.setStroke(3, Color.RED)
+                        gd.setStroke(6, Color.RED) // Thicker Red Border
                         child.setTextColor(Color.RED)
                     } else if (child.text == "0") {
-                        bg?.setStroke(3, Color.GREEN)
+                        gd.setStroke(6, Color.GREEN) // Thicker Green Border
                         child.setTextColor(Color.BLACK)
                     } else if (child.text == "=") {
-                        bg?.setStroke(3, Color.GREEN)
-                        bg?.setColor(Color.parseColor("#E0FFE0")) // Light Green Fill
+                        gd.setStroke(6, Color.GREEN)
+                        gd.setColor(Color.parseColor("#E0FFE0"))
                         child.setTextColor(Color.parseColor("#00AA00"))
                     } else {
-                        // Black Border for others
-                        bg?.setStroke(2, Color.BLACK)
+                        // Normal Keys - Black Border
+                        gd.setStroke(3, Color.BLACK)
 
                         if ("+-×÷".contains(child.text)) child.setTextColor(Color.BLUE)
                         else if (child.text == "⌫") child.setTextColor(Color.RED)
                         else child.setTextColor(Color.BLACK)
                     }
-                    child.background = bg
+                    child.background = gd
                 }
             }
         }
@@ -449,7 +451,14 @@ class MainActivity : AppCompatActivity() {
             val b1 = Button(this); b1.text = btn1Txt; b1.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             val b2 = Button(this); b2.text = btn2Txt; b2.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
-            if(!isDarkMode) { b1.setBackgroundColor(Color.LTGRAY); b2.setBackgroundColor(Color.LTGRAY); b1.setTextColor(Color.BLACK); b2.setTextColor(Color.BLACK) }
+            // FIX 4: Button colors in Dark Mode
+            if(isDarkMode) {
+                b1.setBackgroundColor(Color.DKGRAY); b2.setBackgroundColor(Color.DKGRAY)
+                b1.setTextColor(Color.WHITE); b2.setTextColor(Color.WHITE)
+            } else {
+                b1.setBackgroundColor(Color.LTGRAY); b2.setBackgroundColor(Color.LTGRAY)
+                b1.setTextColor(Color.BLACK); b2.setTextColor(Color.BLACK)
+            }
 
             b1.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * factor1)} $unit2" } }
             b2.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * factor2)} $unit1" } }
@@ -481,7 +490,14 @@ class MainActivity : AppCompatActivity() {
         val btn1 = Button(this); btn1.text = "Kg ➡ Lbs"; btn1.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         val btn2 = Button(this); btn2.text = "Lbs ➡ Kg"; btn2.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
-        if(!isDarkMode) { btn1.setBackgroundColor(Color.LTGRAY); btn2.setBackgroundColor(Color.LTGRAY); btn1.setTextColor(Color.BLACK); btn2.setTextColor(Color.BLACK) }
+        // FIX 4: Button colors in Dark Mode
+        if(isDarkMode) {
+            btn1.setBackgroundColor(Color.DKGRAY); btn2.setBackgroundColor(Color.DKGRAY)
+            btn1.setTextColor(Color.WHITE); btn2.setTextColor(Color.WHITE)
+        } else {
+            btn1.setBackgroundColor(Color.LTGRAY); btn2.setBackgroundColor(Color.LTGRAY)
+            btn1.setTextColor(Color.BLACK); btn2.setTextColor(Color.BLACK)
+        }
 
         btn1.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * 2.20462)} Lbs" } }
         btn2.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v / 2.20462)} Kg" } }
@@ -519,7 +535,16 @@ class MainActivity : AppCompatActivity() {
             cb.tag = i
         }
 
-        AlertDialog.Builder(this).setTitle("📄 Generate Report").setView(scrollView).setPositiveButton("GENERATE PDF") { _, _ ->
+        // FIX 5: Custom Title for Report
+        val titleView = TextView(this)
+        titleView.text = "📄 Generate Report"
+        titleView.textSize = 20f
+        titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK)
+        titleView.setPadding(20, 20, 20, 20)
+        titleView.typeface = Typeface.DEFAULT_BOLD
+        titleView.gravity = Gravity.CENTER
+
+        AlertDialog.Builder(this).setCustomTitle(titleView).setView(scrollView).setPositiveButton("GENERATE PDF") { _, _ ->
             val selectedIDs = ArrayList<Int>()
             for(cb in checkBoxList) { if(cb.isChecked) selectedIDs.add(cb.tag as Int) }
             if(selectedIDs.isNotEmpty()) { generateMultiSheetPdf(titleInput.text.toString().ifEmpty { "EXPENSE REPORT" }, selectedIDs) }
@@ -662,8 +687,8 @@ class MainActivity : AppCompatActivity() {
     private fun loadSheetData(sheetId: Int) { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); val listString = prefs.getString("LIST_$sheetId", ""); expenseList.clear(); grandTotal = 0.0; if (!listString.isNullOrEmpty()) { val items = listString.split("#"); expenseList.addAll(items); for (item in items) { grandTotal += item.substringAfter("₹").trim().toDoubleOrNull() ?: 0.0 } }; topd.text = "₹${removeZero(grandTotal)}"; projectName.text = getSheetName(sheetId); expenseAdapter.notifyDataSetChanged(); calculateCategoryTotals(); secd.text = "0" }
 
     inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() { inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }; override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder { return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false)) }; override fun onBindViewHolder(holder: ViewHolder, position: Int) { holder.textView.text = data[position];
-        // --- LIST TEXT COLOR FIX: Always White if container is Dark (even in Light mode)
-        holder.textView.setTextColor(if(isDarkMode || !isDarkMode) Color.WHITE else Color.BLACK) }; override fun getItemCount() = data.size }
+        // Always White Text because background is always dark
+        holder.textView.setTextColor(Color.WHITE) }; override fun getItemCount() = data.size }
 
     inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() { inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val textView: TextView = view.findViewById(android.R.id.text1) }; override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder { return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false)) }; override fun onBindViewHolder(holder: ViewHolder, position: Int) { holder.textView.text = data[position]; holder.textView.setTextColor(if(isDarkMode) Color.CYAN else Color.CYAN) }; override fun getItemCount() = data.size }
 
@@ -683,7 +708,15 @@ class MainActivity : AppCompatActivity() {
             titleView.typeface = Typeface.DEFAULT_BOLD
             titleView.gravity = Gravity.CENTER
 
-            AlertDialog.Builder(this).setCustomTitle(titleView).setView(input).setPositiveButton("ADD") { _, _ -> addExpenseItem(if(input.text.toString().isEmpty()) "Custom" else input.text.toString(), "📝", value) }.create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() } }
+            // FIX 6: Handle button color in OnShowListener to ensure it works
+            val dialog = AlertDialog.Builder(this).setCustomTitle(titleView).setView(input).setPositiveButton("ADD") { _, _ -> addExpenseItem(if(input.text.toString().isEmpty()) "Custom" else input.text.toString(), "📝", value) }.create()
+            dialog.setOnShowListener {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(if(isDarkMode) Color.CYAN else Color.BLUE)
+            }
+            dialog.window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+            dialog.show()
+        }
+
         val cats = mapOf(R.id.catFood to Pair("Food", "🍔"), R.id.catRent to Pair("Rent", "🏠"), R.id.catTravel to Pair("Travel", "🚕"), R.id.catFuel to Pair("Fuel", "⛽"), R.id.catShop to Pair("Shopping", "🛍️"), R.id.catMed to Pair("Health", "💊"), R.id.catGrocery to Pair("Grocery", "🛒"), R.id.catGym to Pair("Gym", "💪"), R.id.catWifi to Pair("Wifi", "🛜"), R.id.catPower to Pair("Electricity", "⚡"), R.id.catCable to Pair("Cable", "📺"), R.id.catWater to Pair("Water", "💧"), R.id.catRefresh to Pair("Drinks", "🍺"), R.id.catSchool to Pair("School", "🏫"), R.id.catTuition to Pair("Tuition", "📚"), R.id.catHelp to Pair("Maid", "👩"))
         for ((id, pair) in cats) { val btn = findViewById<Button>(id); val content = btn.text.toString(); val newlineIndex = content.indexOf('\n'); if (newlineIndex > 0) { val span = SpannableString(content); span.setSpan(RelativeSizeSpan(2.0f), 0, newlineIndex, 0); btn.text = span }; btn.setOnClickListener { performHaptic(); val rawExpression = secd.text.toString(); if (rawExpression == "Saved!" || rawExpression.isEmpty()) return@setOnClickListener; val value = evaluateExpression(rawExpression); if (value == 0.0) return@setOnClickListener; addExpenseItem(pair.first, pair.second, value) } }
     }
