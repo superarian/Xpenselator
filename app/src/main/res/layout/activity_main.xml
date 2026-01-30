@@ -72,7 +72,12 @@
                 android:textStyle="bold"
                 android:fontFamily="monospace"
                 android:paddingEnd="20dp"
-                android:paddingTop="15dp"/>
+                android:paddingTop="15dp"
+                android:maxLines="1"
+                app:autoSizeTextType="uniform"
+                app:autoSizeMinTextSize="20sp"
+                app:autoSizeMaxTextSize="50sp"
+                app:autoSizeStepGranularity="2sp"/>
         </RelativeLayout>
 
         <TextView
