@@ -551,7 +551,9 @@ class MainActivity : AppCompatActivity() {
                     val parts = items[j].split(":")
                     if (parts.size == 2) {
                         canvas.drawText(parts[0].trim(), 50f, y, paintText)
-                        val priceClean = parts[1].replace("₹", "").trim()
+                        val priceVal = parts[1].replace("₹", "").trim().toDoubleOrNull() ?: 0.0
+                        // FIXED: Enforce 2 decimal places for PDF Alignment
+                        val priceClean = String.format("%.2f", priceVal)
                         canvas.drawText(priceClean, 500f, y, Paint().apply { color = Color.WHITE; textSize = 14f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.RIGHT })
                         y += 20f
                     }
@@ -612,6 +614,7 @@ class MainActivity : AppCompatActivity() {
     private fun saveSheetData(sheetId: Int) { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit(); prefs.putFloat("TOTAL_$sheetId", grandTotal.toFloat()); prefs.putString("LIST_$sheetId", expenseList.joinToString("#")); prefs.apply() }
     private fun loadSheetData(sheetId: Int) { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); val listString = prefs.getString("LIST_$sheetId", ""); expenseList.clear(); grandTotal = 0.0; if (!listString.isNullOrEmpty()) { val items = listString.split("#"); expenseList.addAll(items); for (item in items) { grandTotal += item.substringAfter("₹").trim().toDoubleOrNull() ?: 0.0 } }; topd.text = "₹${removeZero(grandTotal)}"; projectName.text = getSheetName(sheetId); expenseAdapter.notifyDataSetChanged(); calculateCategoryTotals(); secd.text = "0" }
 
+    // --- ALIGNMENT FIX: Dynamic Formatting for 2 Decimal Places ---
     inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val nameView: TextView = view.findViewById(R.id.itemName)
@@ -623,7 +626,9 @@ class MainActivity : AppCompatActivity() {
             val parts = item.split(":")
             if(parts.size == 2) {
                 holder.nameView.text = parts[0].trim()
-                holder.priceView.text = parts[1].trim()
+                // Force 2 decimal places here for perfect alignment
+                val priceVal = parts[1].replace("₹", "").trim().toDoubleOrNull() ?: 0.0
+                holder.priceView.text = "₹" + String.format("%.2f", priceVal)
             } else {
                 holder.nameView.text = item
                 holder.priceView.text = ""
@@ -645,7 +650,9 @@ class MainActivity : AppCompatActivity() {
             val parts = item.split(":")
             if(parts.size == 2) {
                 holder.nameView.text = parts[0].trim()
-                holder.priceView.text = parts[1].trim()
+                // Force 2 decimal places here too
+                val priceVal = parts[1].replace("₹", "").trim().toDoubleOrNull() ?: 0.0
+                holder.priceView.text = "₹" + String.format("%.2f", priceVal)
             } else {
                 holder.nameView.text = item
                 holder.priceView.text = ""
