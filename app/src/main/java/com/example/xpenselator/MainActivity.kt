@@ -33,13 +33,14 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.GestureDetectorCompat
-import androidx.core.widget.TextViewCompat // NEW IMPORT: For disabling auto-size programmatically
+import androidx.core.widget.TextViewCompat
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import java.io.File
 import java.io.FileOutputStream
 import java.math.BigDecimal
+import java.math.MathContext
 import java.math.RoundingMode
 import java.text.DecimalFormat
 import kotlin.math.abs
@@ -59,6 +60,10 @@ class MainActivity : AppCompatActivity() {
     private var grandTotal = BigDecimal.ZERO
     private val expenseList = ArrayList<String>()
     private val summaryList = ArrayList<String>()
+
+    // --- LIMITS ---
+    private val MAX_INPUT_DIGITS = 9
+    private val MAX_TOTAL_LIMIT = BigDecimal("1000000000000") // 1 Trillion
 
     private var currentSheetID = 1
     private var maxSheetID = 1
@@ -534,13 +539,21 @@ class MainActivity : AppCompatActivity() {
             val sheetName = prefs.getString("NAME_$id", "SHEET $id") ?: "SHEET $id"
             val items = if (listString.isNullOrEmpty()) ArrayList<String>() else ArrayList(listString.split("#"))
 
-            var sheetTotal = 0.0
-            val catTotals = HashMap<String, Float>()
+            // --- OWNER FIX: Use BigDecimal for PDF Summation (Prevent Money Leaks) ---
+            var sheetTotal = BigDecimal.ZERO
+            val catTotals = HashMap<String, BigDecimal>()
+
             for(item in items) {
-                val price = item.substringAfter("₹").trim().toDoubleOrNull() ?: 0.0
-                sheetTotal += price
+                val priceStr = item.substringAfter("₹").trim()
+                val price = priceStr.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                sheetTotal = sheetTotal.add(price)
+
                 val parts = item.split(":")
-                if(parts.size == 2) { val cat = parts[0].trim().filter{it.isLetter()}; catTotals[cat] = catTotals.getOrDefault(cat, 0f) + price.toFloat() }
+                if(parts.size == 2) {
+                    val cat = parts[0].trim().filter{it.isLetter()}
+                    val currentCatTotal = catTotals.getOrDefault(cat, BigDecimal.ZERO)
+                    catTotals[cat] = currentCatTotal.add(price)
+                }
             }
 
             var pageCount = 0; val itemsPerPage = 25; val totalPages = if(items.isEmpty()) 1 else (items.size + itemsPerPage - 1) / itemsPerPage
@@ -562,8 +575,8 @@ class MainActivity : AppCompatActivity() {
                     val parts = items[j].split(":")
                     if (parts.size == 2) {
                         canvas.drawText(parts[0].trim(), 50f, y, paintText)
-                        val priceVal = parts[1].replace("₹", "").trim().toDoubleOrNull() ?: 0.0
-                        val priceClean = String.format("%.2f", priceVal)
+                        val priceVal = parts[1].replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO
+                        val priceClean = formatBigDecimal(priceVal)
                         canvas.drawText(priceClean, 500f, y, Paint().apply { color = Color.WHITE; textSize = 14f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.RIGHT })
                         y += 20f
                     }
@@ -571,17 +584,21 @@ class MainActivity : AppCompatActivity() {
 
                 if (end == items.size) {
                     y += 30f
-                    canvas.drawText("TOTAL: ${formatBigDecimal(BigDecimal(sheetTotal))}", 500f, y, Paint().apply { color = Color.GREEN; textSize = 20f; textAlign = Paint.Align.RIGHT; isFakeBoldText = true })
+                    canvas.drawText("TOTAL: ${formatBigDecimal(sheetTotal)}", 500f, y, Paint().apply { color = Color.GREEN; textSize = 20f; textAlign = Paint.Align.RIGHT; isFakeBoldText = true })
                     if (catTotals.isNotEmpty()) {
                         y += 60f
                         canvas.drawText("SPENDING BREAKDOWN:", 50f, y, paintSub)
                         y += 30f
-                        val maxVal = catTotals.values.maxOrNull() ?: 1f
+
+                        // Convert back to Float purely for graphical bar drawing (non-financial)
+                        val maxVal = catTotals.values.maxOfOrNull { it.toFloat() } ?: 1f
                         val colors = mapOf("Food" to Color.parseColor("#FFA500"), "Rent" to Color.parseColor("#4CAF50"), "Travel" to Color.parseColor("#FFC107"), "Fuel" to Color.parseColor("#F44336"), "Shopping" to Color.parseColor("#E91E63"), "Health" to Color.parseColor("#00BCD4"))
                         val sorted = catTotals.toList().sortedByDescending { it.second }
+
                         for ((k, v) in sorted) {
                             if(y > 800f) break
-                            val w = (v / maxVal) * 350f
+                            val valFloat = v.toFloat()
+                            val w = (valFloat / maxVal) * 350f
                             paintBar.color = colors.getOrElse(k) { Color.GRAY }
                             canvas.drawRect(50f, y, 50f + max(w, 10f), y + 15f, paintBar)
                             canvas.drawText("$k: ${v.toInt()}", 50f + max(w, 10f) + 10f, y + 12f, Paint().apply { color = Color.LTGRAY; textSize = 10f })
@@ -668,7 +685,7 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = data.size
     }
 
-    // --- RIGHT PANEL: Summary (FIXED SIZE 14sp) ---
+    // --- RIGHT PANEL: Summary (FIXED SIZE - AUTO-SIZE KILLED) ---
     inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val nameView: TextView = view.findViewById(R.id.itemName)
@@ -676,9 +693,15 @@ class MainActivity : AppCompatActivity() {
         }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder { return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false)) }
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            // --- FIX: LOCKED SIZE FOR CLEAN SUMMARY ---
-            // Disable auto-sizing first to prevent overrides
-            TextViewCompat.setAutoSizeTextTypeWithDefaults(holder.nameView, TextViewCompat.AUTO_SIZE_TEXT_TYPE_NONE)
+
+            // --- THE FIX: TURN OFF AUTO-SIZE ENGINE ---
+            // This prevents the "XML Rule" from shrinking the text randomly
+            TextViewCompat.setAutoSizeTextTypeWithDefaults(
+                holder.nameView,
+                TextViewCompat.AUTO_SIZE_TEXT_TYPE_NONE
+            )
+
+            // Now safely lock the size to 14sp
             holder.nameView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
 
             val item = data[position]
@@ -692,7 +715,7 @@ class MainActivity : AppCompatActivity() {
                 holder.priceView.text = ""
             }
 
-            // CYAN IS VISIBLE ON BLACK BACKGROUND
+            // Keep Cyan Color
             holder.nameView.setTextColor(Color.CYAN)
             holder.priceView.setTextColor(Color.CYAN)
         }
@@ -701,7 +724,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun addExpenseItem(name: String, emoji: String, priceVal: Double) {
         val priceBD = BigDecimal.valueOf(priceVal)
-        grandTotal = grandTotal.add(priceBD); topd.text = "₹${formatBigDecimal(grandTotal)}";
+        val potentialTotal = grandTotal.add(priceBD)
+
+        // --- LIMIT FIX: SAFETY LOCK AT 12 DIGITS (1 TRILLION) ---
+        if (potentialTotal >= MAX_TOTAL_LIMIT) {
+            showFastToast("Max Total Reached! (12 Digits)")
+            return
+        }
+
+        grandTotal = potentialTotal
+        topd.text = "₹${formatBigDecimal(grandTotal)}";
         expenseList.add("$emoji $name: ₹${formatBigDecimal(priceBD)}");
         expenseAdapter.notifyDataSetChanged();
         fullHistoryAdapter.notifyDataSetChanged();
@@ -793,8 +825,8 @@ class MainActivity : AppCompatActivity() {
     private fun setupCalculatorButtons() {
         val numberButtons = listOf(R.id.btn0, R.id.btn1, R.id.btn2, R.id.btn3, R.id.btn4, R.id.btn5, R.id.btn6, R.id.btn7, R.id.btn8, R.id.btn9)
         for (id in numberButtons) { findViewById<Button>(id).setOnClickListener { performHaptic();
-            // --- FIX: LIMIT INPUT TO 12 DIGITS ---
-            if (secd.text.length >= 12 && secd.text != "Saved!") return@setOnClickListener
+            // --- LIMIT FIX: 9 DIGITS MAX ---
+            if (secd.text.length >= MAX_INPUT_DIGITS && secd.text != "Saved!") return@setOnClickListener
 
             val digit = (it as Button).text.toString();
             if (isNewEntry) { secd.text = ""; isNewEntry = false }; if (secd.text == "Saved!") secd.text = "";
@@ -829,7 +861,7 @@ class MainActivity : AppCompatActivity() {
             when (event.action) { MotionEvent.ACTION_DOWN -> { touchStartY = event.rawY; isSheetMode = false; tempSheetID = currentSheetID; handler.postDelayed(longPressRunnable!!, 300);
                 true } MotionEvent.ACTION_MOVE -> { if (isSheetMode) { val steps = ((touchStartY - event.rawY).toInt() / 30);
                 var potential = currentSheetID + steps; if (potential < 1) potential = 1; if (potential > maxSheetID) potential = maxSheetID;
-                if (potential != tempSheetID) { performHaptic(); tempSheetID = potential; updateOverlayList(tempSheetID) } } else { if (abs(touchStartY - event.rawY) > 50) handler.removeCallbacks(longPressRunnable!!) } ;
+                if (potential != tempSheetID) { performHaptic(); tempSheetID = potential; updateOverlayList(tempSheetID) } } else { if (abs(touchStartY - event.rawY) > 50) handler.removeCallbacks(longPressRunnable!!) };
                 true } MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { handler.removeCallbacks(longPressRunnable!!); if (isSheetMode) { overlayContainer.visibility = View.GONE; isSheetMode = false;
                 if (tempSheetID != currentSheetID) { saveSheetData(currentSheetID); currentSheetID = tempSheetID; loadSheetData(currentSheetID); showFastToast("Opened ${getSheetName(currentSheetID)}") } } else { performEqualClick() };
                 true } else -> false } } }
@@ -840,17 +872,65 @@ class MainActivity : AppCompatActivity() {
         overlayText.text = lines.joinToString("\n") }
     private fun performEqualClick() { performHaptic(); val result = evaluateExpression(secd.text.toString()); secd.text = formatBigDecimal(BigDecimal.valueOf(result));
         isNewEntry = true }
-    private fun evaluateExpression(expr: String): Double { if (expr.isEmpty()) return 0.0;
-        var cleanExpr = expr.replace(" ", "").replace("×", "*").replace("÷", "/"); if (cleanExpr.isNotEmpty() && "+-*/".contains(cleanExpr.last())) cleanExpr = cleanExpr.dropLast(1);
-        try { val numbers = ArrayList<Double>(); val ops = ArrayList<Char>(); var currentNum = "";
-            for (char in cleanExpr) { if (char.isDigit() || char == '.') currentNum += char else if ("+-*/".contains(char)) { if (currentNum.isNotEmpty()) { numbers.add(currentNum.toDoubleOrNull() ?: 0.0);
-                currentNum = "" }; ops.add(char) } }; if (currentNum.isNotEmpty()) numbers.add(currentNum.toDoubleOrNull() ?: 0.0); if (numbers.isEmpty()) return 0.0;
-            if (numbers.size == 1) return numbers[0]; var i = 0;
-            while (i < ops.size) { if (ops[i] == '*' || ops[i] == '/') { val n1 = numbers[i];
-                val n2 = numbers[i+1]; var res = 0.0; if (ops[i] == '*') res = n1 * n2 else if (n2 != 0.0) res = n1 / n2;
-                numbers[i] = res; numbers.removeAt(i+1); ops.removeAt(i) } else i++ }; var result = numbers[0];
-            for (j in 0 until ops.size) { if (ops[j] == '+') result += numbers[j+1] else result -= numbers[j+1] };
-            return result } catch (e: Exception) { return 0.0 } }
+
+    // --- OWNER FIX: Use BigDecimal Internally to Stop Leaks ---
+    private fun evaluateExpression(expr: String): Double {
+        if (expr.isEmpty()) return 0.0
+        var cleanExpr = expr.replace(" ", "").replace("×", "*").replace("÷", "/")
+        if (cleanExpr.isNotEmpty() && "+-*/".contains(cleanExpr.last())) cleanExpr = cleanExpr.dropLast(1)
+
+        try {
+            val numbers = ArrayList<BigDecimal>()
+            val ops = ArrayList<Char>()
+            var currentNum = ""
+
+            for (char in cleanExpr) {
+                if (char.isDigit() || char == '.') {
+                    currentNum += char
+                } else if ("+-*/".contains(char)) {
+                    if (currentNum.isNotEmpty()) {
+                        numbers.add(currentNum.toBigDecimalOrNull() ?: BigDecimal.ZERO)
+                        currentNum = ""
+                    }
+                    ops.add(char)
+                }
+            }
+            if (currentNum.isNotEmpty()) numbers.add(currentNum.toBigDecimalOrNull() ?: BigDecimal.ZERO)
+            if (numbers.isEmpty()) return 0.0
+
+            if (numbers.size == 1) return numbers[0].toDouble()
+
+            var i = 0
+            while (i < ops.size) {
+                if (ops[i] == '*' || ops[i] == '/') {
+                    val n1 = numbers[i]
+                    val n2 = numbers[i+1]
+                    var res = BigDecimal.ZERO
+                    if (ops[i] == '*') {
+                        res = n1.multiply(n2)
+                    } else if (n2.compareTo(BigDecimal.ZERO) != 0) {
+                        res = n1.divide(n2, 4, RoundingMode.HALF_UP)
+                    }
+                    // Handle division by zero implicitly (res remains 0 if n2 is 0)
+
+                    numbers[i] = res
+                    numbers.removeAt(i+1)
+                    ops.removeAt(i)
+                } else {
+                    i++
+                }
+            }
+
+            var result = numbers[0]
+            for (j in 0 until ops.size) {
+                if (ops[j] == '+') result = result.add(numbers[j+1])
+                else result = result.subtract(numbers[j+1])
+            }
+            return result.toDouble()
+        } catch (e: Exception) {
+            return 0.0
+        }
+    }
 
     class HorizontalBarChart(context: Context, val data: HashMap<String, Float>) : View(context) { val colors = mapOf("Food" to Color.parseColor("#FFA500"), "Rent" to Color.parseColor("#4CAF50"), "Travel" to Color.parseColor("#FFC107"), "Fuel" to Color.parseColor("#F44336"), "Shopping" to Color.parseColor("#E91E63"), "Health" to Color.parseColor("#00BCD4"), "Grocery" to Color.parseColor("#9C27B0"), "Gym" to Color.parseColor("#009688"), "Wifi" to Color.parseColor("#2196F3"), "Electricity" to Color.parseColor("#CDDC39"), "Cable" to Color.parseColor("#673AB7"), "Water" to Color.parseColor("#3F51B5"), "Drinks" to Color.parseColor("#795548"), "School" to Color.parseColor("#8BC34A"), "Tuition" to Color.parseColor("#FF9800"), "Maid" to Color.parseColor("#00BFFF"), "Custom" to Color.WHITE);
         private val paint = Paint().apply { isAntiAlias = true; style = Paint.Style.FILL };
