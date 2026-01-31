@@ -166,7 +166,7 @@ class MainActivity : AppCompatActivity() {
                 // If vertical scroll -> Ignore
                 if (Math.abs(diffY) > Math.abs(diffX)) return false
 
-                // Horizontal Swipe
+                // Horizontal Swipe Threshold
                 if (Math.abs(diffX) > 50 && Math.abs(velocityX) > 50) {
                     performHaptic()
                     if (diffX < 0) {
@@ -182,12 +182,13 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        // Attach to both lists with EDGE ZONE LOGIC
+        // Attach to both lists with 20-60-20 ZONE LOGIC
         val listTouchListener = View.OnTouchListener { v, event ->
             if (event.action == MotionEvent.ACTION_DOWN) {
                 val screenWidth = resources.displayMetrics.widthPixels
-                val edgeSize = screenWidth * 0.15 // 15% Edge Zone
-                // Only allow swipe if touch is on edges
+                val edgeSize = screenWidth * 0.20 // 20% Edge Zone
+
+                // Only allow swipe if touch is on edges (0-20% OR 80-100%)
                 if (event.rawX < edgeSize || event.rawX > (screenWidth - edgeSize)) {
                     listGestureDetector.onTouchEvent(event)
                     // Return false to let the click pass through if it wasn't a fling
@@ -783,12 +784,39 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = data.size
     }
 
-    // --- SPLIT BILL / OPTION DIALOG ---
+    // --- SPLIT BILL / OPTION DIALOG (FIXED VISIBILITY) ---
     private fun showItemOptions(position: Int) {
         val options = arrayOf("❌ Delete Entry", "⚡ Split Bill")
+
+        // --- OWNER FIX: Prevent Infinite Splitting ---
+        // Check if next item is already a split. If so, block splitting again.
+        if (position + 1 < expenseList.size && expenseList[position + 1].startsWith(SPLIT_PREFIX)) {
+            showFastToast("Item already split! Delete splits first.")
+            return
+        }
+
+        // --- OWNER FIX: Custom Adapter for Visible Text ---
+        val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, options) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent) as TextView
+                view.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+                view.textSize = 18f
+                view.setPadding(40, 30, 40, 30)
+                return view
+            }
+        }
+
+        val titleView = TextView(this)
+        titleView.text = "OPTIONS"
+        titleView.textSize = 22f
+        titleView.setTextColor(Color.CYAN) // Always Cyan Title
+        titleView.setPadding(40, 40, 40, 20)
+        titleView.typeface = Typeface.DEFAULT_BOLD
+        titleView.gravity = Gravity.CENTER
+
         val builder = AlertDialog.Builder(this)
-        builder.setTitle("Options")
-        builder.setItems(options) { _, which ->
+        builder.setCustomTitle(titleView)
+        builder.setAdapter(adapter) { _, which ->
             when (which) {
                 0 -> deleteItem(position)
                 1 -> showSplitDialog(position)
