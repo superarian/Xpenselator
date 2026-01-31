@@ -26,6 +26,8 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -850,7 +852,7 @@ class MainActivity : AppCompatActivity() {
 
         val rowList = ArrayList<Pair<EditText, EditText>>()
 
-        // --- OWNER FIX: Dynamic Row Helper ---
+        // --- OWNER FIX: Dynamic Row Helper with ROBUST Focus & Scroll ---
         fun addRow() {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
@@ -861,6 +863,7 @@ class MainActivity : AppCompatActivity() {
             nameEd.setTextColor(getDynamicTextColor())
             nameEd.setHintTextColor(Color.GRAY)
             nameEd.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.5f)
+            nameEd.isFocusableInTouchMode = true // Ensure focusability
 
             val amtEd = EditText(this)
             amtEd.hint = "0.00"
@@ -873,13 +876,27 @@ class MainActivity : AppCompatActivity() {
             row.addView(amtEd)
             rowsContainer.addView(row)
             rowList.add(Pair(nameEd, amtEd))
+
+            // --- CRITICAL FIX: Explicit Keyboard Handling & Delayed Scroll ---
+            // 1. Show Keyboard first
+            nameEd.requestFocus()
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(nameEd, InputMethodManager.SHOW_IMPLICIT)
+
+            // 2. Wait longer (500ms) for keyboard to fully expand
+            // 3. THEN scroll to bottom
+            // 4. THEN force focus again (in case scroll stole it)
+            scrollView.postDelayed({
+                scrollView.fullScroll(View.FOCUS_DOWN)
+                nameEd.requestFocus()
+            }, 500)
         }
 
         // Add 2 Default Rows Initially
         addRow()
         addRow()
 
-        // --- OWNER FIX: Unlimited [+] Button ---
+        // --- OWNER FIX: Unlimited [+] Button with Scroll Delay ---
         val btnAddMember = Button(this)
         btnAddMember.text = "+ ADD MEMBER"
         btnAddMember.setBackgroundColor(Color.TRANSPARENT)
@@ -887,8 +904,6 @@ class MainActivity : AppCompatActivity() {
         btnAddMember.setOnClickListener {
             performHaptic()
             addRow()
-            // Auto-scroll to bottom
-            scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
         }
         mainLayout.addView(btnAddMember)
 
@@ -901,8 +916,26 @@ class MainActivity : AppCompatActivity() {
             // Count valid names
             val activeRows = rowList.filter { it.first.text.toString().isNotEmpty() }
             if (activeRows.isNotEmpty()) {
-                val splitVal = totalAmount.divide(BigDecimal(activeRows.size), 2, RoundingMode.HALF_UP)
-                activeRows.forEach { it.second.setText(splitVal.toPlainString()) }
+                val count = activeRows.size
+
+                // --- OWNER FIX: Common Sense Math (Penny Distribution) ---
+                // 1. Calculate floor amount (round down)
+                val baseShare = totalAmount.divide(BigDecimal(count), 2, RoundingMode.FLOOR)
+
+                // 2. Calculate remaining pennies
+                val usedTotal = baseShare.multiply(BigDecimal(count))
+                var remainder = totalAmount.subtract(usedTotal)
+                val penny = BigDecimal("0.01")
+
+                // 3. Distribute pennies to first few people
+                for (pair in activeRows) {
+                    var share = baseShare
+                    if (remainder > BigDecimal.ZERO) {
+                        share = share.add(penny)
+                        remainder = remainder.subtract(penny)
+                    }
+                    pair.second.setText(share.toPlainString())
+                }
             } else {
                 showFastToast("Enter names first!")
             }
@@ -918,6 +951,9 @@ class MainActivity : AppCompatActivity() {
         val dialog = AlertDialog.Builder(this)
             .setView(scrollView)
             .create()
+
+        // --- OWNER FIX: Explicitly Enable Resizing for the Dialog Window ---
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
         btnSave.setOnClickListener {
             var sum = BigDecimal.ZERO
