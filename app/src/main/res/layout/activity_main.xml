@@ -106,20 +106,50 @@
             android:background="@drawable/rounded_bg"
             android:clipToOutline="true">
 
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/historyList"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:padding="5dp"
-                android:scrollbars="vertical"/>
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="🕒 HISTORY LOG"
+                    android:textColor="#888888"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:background="#222222"
+                    android:padding="2dp"/>
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/historyList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="5dp"
+                    android:scrollbars="vertical"/>
+            </LinearLayout>
 
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/summaryList"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:padding="5dp"
-                android:background="#1500FF00"
-                android:scrollbars="vertical"/>
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="📊 CATEGORY SUMMARY"
+                    android:textColor="#00FFFF"
+                    android:textSize="10sp"
+                    android:fontFamily="monospace"
+                    android:gravity="center"
+                    android:background="#222222"
+                    android:padding="2dp"/>
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/summaryList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="5dp"
+                    android:background="#1500FF00"
+                    android:scrollbars="vertical"/>
+            </LinearLayout>
         </ViewFlipper>
 
         <LinearLayout
