@@ -1,18 +1,20 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    // KSP Plugin for Room
+    id("com.google.devtools.ksp") version "2.1.0-1.0.29"
 }
 
 android {
     namespace = "com.example.xpenselator"
-    compileSdk = 35 // FIXED: Changed from preview 36 to stable 35
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.byteskull.xpenselator"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2        // INCREASED
-        versionName = "1.1"    // UPDATED
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -45,4 +47,12 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
+    // --- ROOM DATABASE TOOLS ---
+    val room_version = "2.6.1"
+    implementation("androidx.room:room-runtime:$room_version")
+    implementation("androidx.room:room-ktx:$room_version")
+
+    // KSP Compiler (Replaces KAPT)
+    ksp("androidx.room:room-compiler:$room_version")
 }
