@@ -878,18 +878,18 @@ class MainActivity : AppCompatActivity() {
             rowList.add(Pair(nameEd, amtEd))
 
             // --- CRITICAL FIX: Explicit Keyboard Handling & Delayed Scroll ---
-            // 1. Show Keyboard first
+            // 1. Show Keyboard first on the NEW box
             nameEd.requestFocus()
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
             imm.showSoftInput(nameEd, InputMethodManager.SHOW_IMPLICIT)
 
-            // 2. Wait longer (500ms) for keyboard to fully expand
+            // 2. Wait longer (200ms) for keyboard to pop
             // 3. THEN scroll to bottom
-            // 4. THEN force focus again (in case scroll stole it)
+            // 4. THEN force focus again
             scrollView.postDelayed({
                 scrollView.fullScroll(View.FOCUS_DOWN)
                 nameEd.requestFocus()
-            }, 500)
+            }, 200)
         }
 
         // Add 2 Default Rows Initially
@@ -1205,6 +1205,10 @@ class MainActivity : AppCompatActivity() {
     private fun evaluateExpression(expr: String): Double {
         if (expr.isEmpty()) return 0.0
         var cleanExpr = expr.replace(" ", "").replace("×", "*").replace("÷", "/")
+
+        // OWNER FIX: Handle negative numbers (e.g. "-100" becomes "0-100")
+        if (cleanExpr.startsWith("-")) cleanExpr = "0" + cleanExpr
+
         if (cleanExpr.isNotEmpty() && "+-*/".contains(cleanExpr.last())) cleanExpr = cleanExpr.dropLast(1)
 
         try {
