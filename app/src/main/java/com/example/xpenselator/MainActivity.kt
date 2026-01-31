@@ -34,7 +34,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.GestureDetectorCompat
 import androidx.core.widget.TextViewCompat
-import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import java.io.File
@@ -93,7 +92,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var keypadArea: GridLayout
     private lateinit var catLayout: LinearLayout
-    private lateinit var historyContainer: LinearLayout
+    // NOTE: historyContainer and keypadContainer were for background tints,
+    // kept for theme engine compatibility even if container changed
     private lateinit var keypadContainer: LinearLayout
 
     private lateinit var hisd: RecyclerView
@@ -135,39 +135,70 @@ class MainActivity : AppCompatActivity() {
         secd = findViewById(R.id.inputDisplay)
         keypadArea = findViewById(R.id.keypadArea)
 
-        val hList = findViewById<View>(R.id.historyList)
-        historyContainer = hList.parent as LinearLayout
-
         val kArea = findViewById<View>(R.id.keypadArea)
         keypadContainer = kArea.parent as LinearLayout
 
         val cCustom = findViewById<View>(R.id.catCustom)
         catLayout = cCustom.parent as LinearLayout
 
+        // --- OWNER FIX: VIEW FLIPPER & SMART GESTURES ---
+
+        // 1. SETUP VIEW FLIPPER (The Container)
+        val viewFlipper = findViewById<ViewFlipper>(R.id.viewFlipper)
+        viewFlipper.setInAnimation(this, android.R.anim.slide_in_left)
+        viewFlipper.setOutAnimation(this, android.R.anim.slide_out_right)
+
+        // 2. SETUP HISTORY LIST (Page 1)
         hisd = findViewById(R.id.historyList)
         hisd.layoutManager = LinearLayoutManager(this)
         expenseAdapter = ExpenseAdapter(expenseList)
         hisd.adapter = expenseAdapter
+        // Swipe-to-Delete removed. Long-press added in Adapter.
 
-        val swipeHandler = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
-            override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
-            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) { deleteItem(viewHolder.adapterPosition) }
-        }
-        ItemTouchHelper(swipeHandler).attachToRecyclerView(hisd)
-
+        // 3. SETUP SUMMARY LIST (Page 2)
         summaryRecycler = findViewById(R.id.summaryList)
         summaryRecycler.layoutManager = LinearLayoutManager(this)
         summaryAdapter = SummaryAdapter(summaryList)
         summaryRecycler.adapter = summaryAdapter
 
-        val rightSwipe = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
-            override fun onMove(r: RecyclerView, v: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
-            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
-                val pos = viewHolder.adapterPosition
-                if(pos < summaryList.size) { deleteCategory(summaryList[pos].split(":")[0].trim()) }
+        // 4. THE SMART LIST DETECTOR
+        // Only listens for Left/Right swipes. Ignores Up/Down so you can scroll.
+        val listGestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                if (e1 == null) return false
+                val diffX = e2.x - e1.x
+                val diffY = e2.y - e1.y
+
+                // IF SCROLLING VERTICALLY -> Return False (Let the list scroll!)
+                if (Math.abs(diffY) > Math.abs(diffX)) {
+                    return false
+                }
+
+                // IF SWIPING HORIZONTALLY -> Toggle Views
+                if (Math.abs(diffX) > 50 && Math.abs(velocityX) > 50) {
+                    performHaptic()
+                    if (diffX < 0) {
+                        // Swipe Left -> Show Summary
+                        if(viewFlipper.displayedChild == 0) viewFlipper.showNext()
+                    } else {
+                        // Swipe Right -> Show History
+                        if(viewFlipper.displayedChild == 1) viewFlipper.showPrevious()
+                    }
+                    return true
+                }
+                return false
             }
+        })
+
+        // Attach to both lists
+        val listTouchListener = View.OnTouchListener { _, event ->
+            listGestureDetector.onTouchEvent(event)
+            false // Crucial: Returning false allows the scroll event to pass through!
         }
-        ItemTouchHelper(rightSwipe).attachToRecyclerView(summaryRecycler)
+        hisd.setOnTouchListener(listTouchListener)
+        summaryRecycler.setOnTouchListener(listTouchListener)
+
+        // --- END OWNER FIX ---
 
         projectName = findViewById(R.id.projectName)
         overlayContainer = findViewById(R.id.sheetOverlayContainer)
@@ -193,10 +224,12 @@ class MainActivity : AppCompatActivity() {
         applyThemeManual()
         loadSheetData(currentSheetID)
 
+        // GLOBAL GESTURE DETECTOR (For Sheet Changing via "=" Long Press/Swipe)
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
                 if (e1 == null) return false
                 val diffY = e2.y - e1.y
+                // Only handle vertical sheet swipes if NOT on the list
                 if (Math.abs(diffY) > 50 && Math.abs(velocityY) > 50) {
                     if (diffY < 0) goToNextSheet() else goToPrevSheet()
                     return true
@@ -229,7 +262,8 @@ class MainActivity : AppCompatActivity() {
             topd.setTextColor(Color.GREEN)
             btnSettings.setColorFilter(Color.WHITE)
             btnHistory.setColorFilter(Color.LTGRAY)
-            historyContainer.background.setTint(Color.parseColor("#1A1A1A"))
+            // historyContainer is inside ViewFlipper now, but we can tint the flipper or lists directly if needed
+            // For now, lists have transparent/black backgrounds set in XML
             keypadContainer.background.setTint(Color.parseColor("#050505"))
             historyOverlay.setBackgroundColor(Color.parseColor("#151515"))
             secd.setBackgroundColor(Color.parseColor("#2C2C2C"))
@@ -254,8 +288,6 @@ class MainActivity : AppCompatActivity() {
             topd.setTextColor(Color.parseColor("#006400"))
             secd.setBackgroundColor(Color.WHITE)
             secd.setTextColor(Color.BLACK)
-            // THIS LINE KEEPS THE LIST BACKGROUND BLACK EVEN IN LIGHT MODE
-            historyContainer.background.setTint(Color.BLACK)
             historyOverlay.setBackgroundColor(Color.WHITE)
             btnSettings.setColorFilter(Color.DKGRAY)
             btnHistory.setColorFilter(Color.DKGRAY)
@@ -659,15 +691,17 @@ class MainActivity : AppCompatActivity() {
         secd.text = "0"
     }
 
-    // --- LEFT PANEL: Expense History (AUTO-SIZE ENABLED) ---
+    // --- LEFT PANEL: Expense History (Long Press Delete) ---
     inner class ExpenseAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val nameView: TextView = view.findViewById(R.id.itemName)
             val priceView: TextView = view.findViewById(R.id.itemPrice)
         }
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder { return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false)) }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false))
+        }
+
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            // NO setTextSize here -> Allows XML Auto-Sizing to shrink long text!
             val item = data[position]
             val parts = item.split(":")
             if(parts.size == 2) {
@@ -680,12 +714,23 @@ class MainActivity : AppCompatActivity() {
             }
             holder.nameView.setTextColor(Color.WHITE)
             holder.priceView.setTextColor(Color.WHITE)
+
+            // --- OWNER FIX: LONG PRESS TO DELETE ---
+            holder.itemView.setOnLongClickListener {
+                performHaptic()
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Delete Entry?")
+                    .setMessage("Remove '${holder.nameView.text}'?")
+                    .setPositiveButton("DELETE") { _, _ -> deleteItem(position) }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+                true
+            }
         }
         override fun getItemCount() = data.size
     }
 
-    // --- RIGHT PANEL: Summary (NOW MATCHES LEFT PANEL STYLE) ---
-    // FIXED: Removed code that forced text size. Now it auto-shrinks like the left panel.
+    // --- RIGHT PANEL: Summary (Simple Style) ---
     inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() {
         inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val nameView: TextView = view.findViewById(R.id.itemName)
