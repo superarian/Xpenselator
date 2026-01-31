@@ -92,6 +92,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var catLayout: LinearLayout
     private lateinit var keypadContainer: LinearLayout
 
+    private lateinit var viewFlipper: ViewFlipper
+    private lateinit var tabHistory: Button
+    private lateinit var tabSummary: Button
     private lateinit var hisd: RecyclerView
     private lateinit var summaryRecycler: RecyclerView
 
@@ -137,74 +140,43 @@ class MainActivity : AppCompatActivity() {
         val cCustom = findViewById<View>(R.id.catCustom)
         catLayout = cCustom.parent as LinearLayout
 
-        // --- OWNER FIX: VIEW FLIPPER & SMART GESTURES ---
+        // --- OWNER FIX: TAB SYSTEM & VIEW FLIPPER ---
 
-        // 1. SETUP VIEW FLIPPER
-        val viewFlipper = findViewById<ViewFlipper>(R.id.viewFlipper)
-        viewFlipper.setInAnimation(this, android.R.anim.slide_in_left)
-        viewFlipper.setOutAnimation(this, android.R.anim.slide_out_right)
+        // 1. SETUP VIEW FLIPPER (No Swipe, Just Animations)
+        viewFlipper = findViewById(R.id.viewFlipper)
+        viewFlipper.setInAnimation(this, android.R.anim.fade_in)
+        viewFlipper.setOutAnimation(this, android.R.anim.fade_out)
 
-        // 2. SETUP HISTORY LIST (Page 1)
+        // 2. SETUP TABS
+        tabHistory = findViewById(R.id.tabHistory)
+        tabSummary = findViewById(R.id.tabSummary)
+
+        tabHistory.setOnClickListener {
+            performHaptic()
+            if (viewFlipper.displayedChild != 0) {
+                viewFlipper.displayedChild = 0
+                updateTabVisuals(0)
+            }
+        }
+
+        tabSummary.setOnClickListener {
+            performHaptic()
+            if (viewFlipper.displayedChild != 1) {
+                viewFlipper.displayedChild = 1
+                updateTabVisuals(1)
+            }
+        }
+
+        // 3. SETUP LISTS
         hisd = findViewById(R.id.historyList)
         hisd.layoutManager = LinearLayoutManager(this)
         expenseAdapter = ExpenseAdapter(expenseList)
         hisd.adapter = expenseAdapter
 
-        // 3. SETUP SUMMARY LIST (Page 2)
         summaryRecycler = findViewById(R.id.summaryList)
         summaryRecycler.layoutManager = LinearLayoutManager(this)
         summaryAdapter = SummaryAdapter(summaryList)
         summaryRecycler.adapter = summaryAdapter
-
-        // 4. THE SMART LIST DETECTOR (EDGE ONLY SWIPE)
-        val listGestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                if (e1 == null) return false
-                val diffX = e2.x - e1.x
-                val diffY = e2.y - e1.y
-
-                // If vertical scroll -> Ignore
-                if (Math.abs(diffY) > Math.abs(diffX)) return false
-
-                // Horizontal Swipe Threshold
-                if (Math.abs(diffX) > 50 && Math.abs(velocityX) > 50) {
-                    performHaptic()
-                    if (diffX < 0) {
-                        // Swipe Left -> Show Summary
-                        if(viewFlipper.displayedChild == 0) viewFlipper.showNext()
-                    } else {
-                        // Swipe Right -> Show History
-                        if(viewFlipper.displayedChild == 1) viewFlipper.showPrevious()
-                    }
-                    return true
-                }
-                return false
-            }
-        })
-
-        // Attach to both lists with 20-60-20 ZONE LOGIC
-        val listTouchListener = View.OnTouchListener { v, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                val screenWidth = resources.displayMetrics.widthPixels
-                val edgeSize = screenWidth * 0.20 // 20% Edge Zone
-
-                // Only allow swipe if touch is on edges (0-20% OR 80-100%)
-                if (event.rawX < edgeSize || event.rawX > (screenWidth - edgeSize)) {
-                    listGestureDetector.onTouchEvent(event)
-                    // Return false to let the click pass through if it wasn't a fling
-                    return@OnTouchListener false
-                }
-            } else {
-                // If it's a move/up action related to an edge start, let detector handle it
-                listGestureDetector.onTouchEvent(event)
-            }
-            false // Always allow standard scrolling/clicking to work
-        }
-
-        // Apply touch listener to the container layout inside ViewFlipper, not just the RecyclerView
-        // Note: The click listener needs to be on the RecyclerView to capture scrolls
-        hisd.setOnTouchListener(listTouchListener)
-        summaryRecycler.setOnTouchListener(listTouchListener)
 
         // --- END OWNER FIX ---
 
@@ -241,6 +213,9 @@ class MainActivity : AppCompatActivity() {
         applyThemeManual()
         loadSheetData(currentSheetID)
 
+        // Initialize Tab Visuals
+        updateTabVisuals(0)
+
         // GLOBAL GESTURE DETECTOR (For Sheet Changing via "=" Long Press/Swipe)
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
@@ -267,6 +242,25 @@ class MainActivity : AppCompatActivity() {
         setupEqualButtonTouch()
         setupZeroButtonTouch()
         setupACButtonTouch()
+    }
+
+    // --- TAB VISUALIZER ---
+    private fun updateTabVisuals(selected: Int) {
+        if (selected == 0) {
+            // History Active
+            tabHistory.setTextColor(Color.GREEN)
+            tabHistory.setBackgroundColor(Color.parseColor("#3300FF00"))
+
+            tabSummary.setTextColor(Color.GRAY)
+            tabSummary.setBackgroundColor(Color.TRANSPARENT)
+        } else {
+            // Summary Active
+            tabHistory.setTextColor(Color.GRAY)
+            tabHistory.setBackgroundColor(Color.TRANSPARENT)
+
+            tabSummary.setTextColor(Color.CYAN)
+            tabSummary.setBackgroundColor(Color.parseColor("#3300FFFF"))
+        }
     }
 
     // --- THEME ENGINE ---
@@ -338,6 +332,9 @@ class MainActivity : AppCompatActivity() {
         }
         expenseAdapter.notifyDataSetChanged()
         summaryAdapter.notifyDataSetChanged()
+
+        // Refresh Tabs Color
+        updateTabVisuals(viewFlipper.displayedChild)
     }
 
     private fun getDynamicTextColor(): Int {
@@ -789,7 +786,6 @@ class MainActivity : AppCompatActivity() {
         val options = arrayOf("❌ Delete Entry", "⚡ Split Bill")
 
         // --- OWNER FIX: Prevent Infinite Splitting ---
-        // Check if next item is already a split. If so, block splitting again.
         if (position + 1 < expenseList.size && expenseList[position + 1].startsWith(SPLIT_PREFIX)) {
             showFastToast("Item already split! Delete splits first.")
             return
@@ -854,8 +850,8 @@ class MainActivity : AppCompatActivity() {
 
         val rowList = ArrayList<Pair<EditText, EditText>>()
 
-        // Add 3 Default Rows
-        for (i in 0 until 3) {
+        // --- OWNER FIX: Dynamic Row Helper ---
+        fun addRow() {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.setPadding(0, 10, 0, 10)
@@ -878,6 +874,23 @@ class MainActivity : AppCompatActivity() {
             rowsContainer.addView(row)
             rowList.add(Pair(nameEd, amtEd))
         }
+
+        // Add 2 Default Rows Initially
+        addRow()
+        addRow()
+
+        // --- OWNER FIX: Unlimited [+] Button ---
+        val btnAddMember = Button(this)
+        btnAddMember.text = "+ ADD MEMBER"
+        btnAddMember.setBackgroundColor(Color.TRANSPARENT)
+        btnAddMember.setTextColor(Color.LTGRAY)
+        btnAddMember.setOnClickListener {
+            performHaptic()
+            addRow()
+            // Auto-scroll to bottom
+            scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
+        }
+        mainLayout.addView(btnAddMember)
 
         // Action Buttons
         val btnSplitEqual = Button(this)

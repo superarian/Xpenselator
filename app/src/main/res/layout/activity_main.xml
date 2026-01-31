@@ -97,6 +97,37 @@
             android:ellipsize="none"
             android:layout_marginBottom="4dp"/>
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:weightSum="2"
+            android:background="#151515">
+            <Button
+                android:id="@+id/tabHistory"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="🕒 HISTORY"
+                android:textColor="#00FF00"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:background="@android:color/transparent"
+                style="?android:attr/borderlessButtonStyle"/>
+            <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#333333"/>
+            <Button
+                android:id="@+id/tabSummary"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="📊 SUMMARY"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:background="@android:color/transparent"
+                style="?android:attr/borderlessButtonStyle"/>
+        </LinearLayout>
+
         <ViewFlipper
             android:id="@+id/viewFlipper"
             android:layout_width="match_parent"
@@ -110,16 +141,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:orientation="vertical">
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="🕒 HISTORY LOG"
-                    android:textColor="#888888"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:gravity="center"
-                    android:background="#222222"
-                    android:padding="2dp"/>
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/historyList"
                     android:layout_width="match_parent"
@@ -132,16 +153,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:orientation="vertical">
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="📊 CATEGORY SUMMARY"
-                    android:textColor="#00FFFF"
-                    android:textSize="10sp"
-                    android:fontFamily="monospace"
-                    android:gravity="center"
-                    android:background="#222222"
-                    android:padding="2dp"/>
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/summaryList"
                     android:layout_width="match_parent"
