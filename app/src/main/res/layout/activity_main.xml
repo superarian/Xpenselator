@@ -153,13 +153,26 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:orientation="vertical">
+
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/summaryList"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
                     android:padding="5dp"
                     android:background="#1500FF00"
                     android:scrollbars="vertical"/>
+
+                <Button
+                    android:id="@+id/btnSplitGlobal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="✂️ SPLIT BILL"
+                    android:textSize="14sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:backgroundTint="#008800"
+                    android:fontFamily="monospace"/>
             </LinearLayout>
         </ViewFlipper>
 
