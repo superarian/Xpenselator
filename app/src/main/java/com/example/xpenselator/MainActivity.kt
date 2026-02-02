@@ -54,15 +54,18 @@ class MainActivity : AppCompatActivity() {
     private val PAYMENT_LINK = "https://t.me/Xpenselator_Bot"
 
     private var isNewEntry = true
-    private var isDisplayingResult = false // OWNER FIX: Tracks if "Saved!" or a result is shown
+    private var isDisplayingResult = false
     private var grandTotal = BigDecimal.ZERO
     private val expenseList = ArrayList<String>()
     private val summaryList = ArrayList<String>()
 
-    // --- LIMITS ---
+    // --- LIMITS & CONSTANTS ---
     private val MAX_INPUT_DIGITS = 9
     private val MAX_TOTAL_LIMIT = BigDecimal("1000000000000") // 1 Trillion
     private val SPLIT_PREFIX = "↳"
+
+    // NEW: Tag format to identify which category a split belongs to
+    // Format: "↳ [Food] Name: ₹Amount"
 
     private var currentSheetID = 1
     private var maxSheetID = 1
@@ -271,7 +274,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             window.statusBarColor = Color.parseColor("#E0E0E0")
             rootView.setBackgroundColor(Color.parseColor("#F5F5F5"))
-            headerBox.setBackgroundColor(Color.WHITE)
             topd.setTextColor(Color.parseColor("#006400"))
             secd.setBackgroundColor(Color.WHITE)
             secd.setTextColor(Color.BLACK)
@@ -498,9 +500,12 @@ class MainActivity : AppCompatActivity() {
                     val rawItem = items[j]
                     if (rawItem.startsWith(SPLIT_PREFIX)) {
                         val parts = rawItem.replace(SPLIT_PREFIX, "").split(":")
-                        if (parts.size == 2) {
-                            canvas.drawText("  ↳ ${parts[0].trim()}", 50f, y, Paint().apply { color = Color.GRAY; textSize = 12f; typeface = Typeface.MONOSPACE })
-                            val priceVal = parts[1].replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO
+                        if (parts.size >= 2) {
+                            // OWNER FIX: Handle tagged categories in PDF (Remove tag for clean look)
+                            var name = parts[0].trim()
+                            if (name.contains("]")) name = name.substringAfter("]").trim()
+                            canvas.drawText("  ↳ $name", 50f, y, Paint().apply { color = Color.GRAY; textSize = 12f; typeface = Typeface.MONOSPACE })
+                            val priceVal = parts.last().replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO
                             canvas.drawText(formatBigDecimal(priceVal), 500f, y, Paint().apply { color = Color.GRAY; textSize = 12f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.RIGHT })
                         }
                     } else {
@@ -573,94 +578,346 @@ class MainActivity : AppCompatActivity() {
             val item = data[position]
             if (item.startsWith(SPLIT_PREFIX)) {
                 val cleanItem = item.replace(SPLIT_PREFIX, "").trim(); val parts = cleanItem.split(":")
-                holder.nameView.text = "   ↳ " + parts.getOrElse(0){""}; holder.nameView.setTextColor(Color.GRAY); holder.nameView.textSize = 14f
-                if(parts.size == 2) { val pVal = parts[1].replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO; holder.priceView.text = "₹" + formatBigDecimal(pVal) } else holder.priceView.text = ""
+                // OWNER FIX: Remove category tag from display in history
+                var nameDisplay = parts.getOrElse(0){""}
+                if(nameDisplay.contains("]")) nameDisplay = nameDisplay.substringAfter("]").trim()
+
+                holder.nameView.text = "   ↳ " + nameDisplay
+                holder.nameView.setTextColor(Color.GRAY); holder.nameView.textSize = 14f
+                if(parts.size >= 2) { val pVal = parts.last().replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO; holder.priceView.text = "₹" + formatBigDecimal(pVal) } else holder.priceView.text = ""
                 holder.priceView.setTextColor(Color.GRAY); holder.priceView.textSize = 14f; holder.itemView.setOnLongClickListener(null)
             } else {
                 val parts = item.split(":"); if(parts.size == 2) { holder.nameView.text = parts[0].trim(); val pVal = parts[1].replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO; holder.priceView.text = "₹" + formatBigDecimal(pVal) } else { holder.nameView.text = item; holder.priceView.text = "" }
                 holder.nameView.setTextColor(Color.WHITE); holder.nameView.textSize = 16f; holder.priceView.setTextColor(Color.WHITE); holder.priceView.textSize = 16f
-                holder.itemView.setOnLongClickListener { performHaptic(); showItemOptions(position); true }
+                // OWNER FIX: Changed from showItemOptions to confirmDeleteItem
+                holder.itemView.setOnLongClickListener { performHaptic(); confirmDeleteItem(position); true }
             }
         }
         override fun getItemCount() = data.size
     }
 
-    private fun showItemOptions(position: Int) {
-        val options = arrayOf("❌ Delete Entry", "⚡ Split Bill")
-        if (position + 1 < expenseList.size && expenseList[position + 1].startsWith(SPLIT_PREFIX)) { showFastToast("Item already split! Delete splits first."); return }
+    // OWNER FIX: Simplified History Long Press (Only Delete)
+    private fun confirmDeleteItem(position: Int) {
+        val titleView = TextView(this)
+        titleView.text = "Delete Entry?"
+        titleView.textSize = 20f
+        titleView.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+        titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER
+
+        AlertDialog.Builder(this)
+            .setCustomTitle(titleView)
+            .setPositiveButton("DELETE") { _, _ -> deleteItem(position) }
+            .setNegativeButton("CANCEL", null)
+            .create().apply {
+                window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+                show()
+            }
+    }
+
+    // --- NEW SUMMARY ADAPTER WITH LONG PRESS LOGIC ---
+    inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() {
+        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+            val nameView: TextView = view.findViewById(R.id.itemName)
+            val priceView: TextView = view.findViewById(R.id.itemPrice)
+        }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder = ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false))
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val item = data[position]; val parts = item.split(":")
+            val catName = if(parts.size == 2) parts[0].trim() else item
+            val totalAmt = if(parts.size == 2) parts[1].replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO else BigDecimal.ZERO
+
+            if(parts.size == 2) {
+                holder.nameView.text = catName
+                holder.priceView.text = "₹" + formatBigDecimal(totalAmt)
+            } else {
+                holder.nameView.text = item
+                holder.priceView.text = ""
+            }
+            holder.nameView.setTextColor(Color.CYAN)
+            holder.priceView.setTextColor(Color.CYAN)
+
+            // OWNER FIX: Long Press triggers the new robust management menu
+            holder.itemView.setOnLongClickListener {
+                performHaptic()
+                showSummaryOptions(catName, totalAmt)
+                true
+            }
+        }
+        override fun getItemCount() = data.size
+    }
+
+    // --- OWNER FIX: SUMMARY MANAGEMENT LOGIC ---
+    private fun showSummaryOptions(category: String, total: BigDecimal) {
+        // Check if splits exist for this category
+        val hasSplit = expenseList.any { it.startsWith(SPLIT_PREFIX) && it.contains("[$category]") }
+
+        val options = if(hasSplit) {
+            arrayOf("🗑️ Delete Category (Full)", "✏️ Edit / Delete Split")
+        } else {
+            arrayOf("🗑️ Delete Category (Full)", "⚡ Split Category Bill")
+        }
+
         val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, options) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = super.getView(position, convertView, parent) as TextView
-                view.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK); view.textSize = 18f; view.setPadding(40, 30, 40, 30); return view
+                view.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+                view.textSize = 18f
+                view.setPadding(40, 30, 40, 30)
+                return view
             }
         }
-        val titleView = TextView(this); titleView.text = "OPTIONS"; titleView.textSize = 22f; titleView.setTextColor(Color.CYAN); titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER
-        AlertDialog.Builder(this).setCustomTitle(titleView).setAdapter(adapter) { _, which -> when (which) { 0 -> deleteItem(position); 1 -> showSplitDialog(position) } }.create().apply {
-            window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
-            listView.setBackgroundColor(if(isDarkMode) Color.parseColor("#1E1E1E") else Color.WHITE); show()
-        }
+
+        val titleView = TextView(this)
+        titleView.text = "MANAGE: $category"
+        titleView.textSize = 20f
+        titleView.setTextColor(Color.CYAN)
+        titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER
+
+        AlertDialog.Builder(this)
+            .setCustomTitle(titleView)
+            .setAdapter(adapter) { _, which ->
+                if (which == 0) {
+                    // Delete Category
+                    performDeleteCategory(category)
+                } else {
+                    // Split Logic (New or Edit)
+                    showCategorySplitDialog(category, total, hasSplit)
+                }
+            }.create().apply {
+                window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+                listView.setBackgroundColor(if(isDarkMode) Color.parseColor("#1E1E1E") else Color.WHITE)
+                show()
+            }
     }
 
-    private fun showSplitDialog(position: Int) {
-        val itemStr = expenseList[position]; val totalAmount = itemStr.substringAfter("₹").trim().toBigDecimalOrNull() ?: return
-        val scrollView = ScrollView(this); val mainLayout = LinearLayout(this); mainLayout.orientation = LinearLayout.VERTICAL; mainLayout.setPadding(30, 30, 30, 30); scrollView.addView(mainLayout)
-        val header = TextView(this); header.text = "Split ₹${formatBigDecimal(totalAmount)}"; header.textSize = 20f; header.setTextColor(Color.CYAN); header.gravity = Gravity.CENTER; mainLayout.addView(header)
-        val rowsContainer = LinearLayout(this); rowsContainer.orientation = LinearLayout.VERTICAL; mainLayout.addView(rowsContainer)
+    private fun performDeleteCategory(category: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete All $category?")
+            .setMessage("This will remove every single entry and split for $category.")
+            .setPositiveButton("DELETE ALL") { _, _ ->
+                performHaptic()
+                var currentTotalForCat = BigDecimal.ZERO
+
+                // Identify items to remove
+                val toRemove = ArrayList<String>()
+                for (item in expenseList) {
+                    if (item.contains(category)) {
+                        // Check if it's a real entry contributing to total
+                        if (!item.startsWith(SPLIT_PREFIX)) {
+                            val priceStr = item.substringAfter("₹").trim()
+                            val price = priceStr.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                            currentTotalForCat = currentTotalForCat.add(price)
+                        }
+                        toRemove.add(item)
+                    }
+                }
+
+                expenseList.removeAll(toRemove.toSet())
+                grandTotal = grandTotal.subtract(currentTotalForCat)
+                if (grandTotal < BigDecimal.ZERO) grandTotal = BigDecimal.ZERO
+
+                topd.text = "₹${formatBigDecimal(grandTotal)}"
+                expenseAdapter.notifyDataSetChanged()
+                fullHistoryAdapter.notifyDataSetChanged()
+                calculateCategoryTotals()
+                saveSheetData(currentSheetID)
+                showFastToast("Deleted all $category")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showCategorySplitDialog(category: String, totalAmount: BigDecimal, isEditMode: Boolean) {
+        val scrollView = ScrollView(this)
+        val mainLayout = LinearLayout(this); mainLayout.orientation = LinearLayout.VERTICAL; mainLayout.setPadding(30, 30, 30, 30)
+        scrollView.addView(mainLayout)
+
+        val header = TextView(this); header.text = "Split $category: ₹${formatBigDecimal(totalAmount)}"; header.textSize = 20f; header.setTextColor(Color.CYAN)
+        header.gravity = Gravity.CENTER; mainLayout.addView(header)
+
+        // REMAINING INDICATOR
+        val remainingText = TextView(this)
+        remainingText.text = "Remaining to assign: ₹${formatBigDecimal(totalAmount)}"
+        remainingText.setTextColor(Color.YELLOW)
+        remainingText.gravity = Gravity.CENTER
+        remainingText.setPadding(0,10,0,10)
+        mainLayout.addView(remainingText)
+
+        val rowsContainer = LinearLayout(this); rowsContainer.orientation = LinearLayout.VERTICAL
+        mainLayout.addView(rowsContainer)
+
         val rowList = ArrayList<Pair<EditText, EditText>>()
-        fun addRow() {
-            val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.setPadding(0, 10, 0, 10)
-            val nEd = EditText(this); nEd.hint = "Name"; nEd.setTextColor(getDynamicTextColor()); nEd.setHintTextColor(Color.GRAY); nEd.layoutParams = LinearLayout.LayoutParams(0, -2, 1.5f); nEd.isFocusableInTouchMode = true
-            val aEd = EditText(this); aEd.hint = "0.00"; aEd.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL; aEd.setTextColor(getDynamicTextColor()); aEd.setHintTextColor(Color.GRAY); aEd.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-            row.addView(nEd); row.addView(aEd); rowsContainer.addView(row); rowList.add(Pair(nEd, aEd)); nEd.requestFocus()
-            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager; imm.showSoftInput(nEd, InputMethodManager.SHOW_IMPLICIT)
-            scrollView.postDelayed({ scrollView.fullScroll(View.FOCUS_DOWN); nEd.requestFocus() }, 200)
+
+        // Helper to update remaining logic
+        fun updateRemaining() {
+            var assigned = BigDecimal.ZERO
+            for(p in rowList) {
+                val v = p.second.text.toString().toBigDecimalOrNull() ?: BigDecimal.ZERO
+                assigned = assigned.add(v)
+            }
+            val rem = totalAmount.subtract(assigned)
+            remainingText.text = "Remaining to assign: ₹${formatBigDecimal(rem)}"
+            if(rem.compareTo(BigDecimal.ZERO) == 0) remainingText.setTextColor(Color.GREEN)
+            else remainingText.setTextColor(Color.RED)
         }
-        addRow(); addRow()
-        val btnAddMember = Button(this); btnAddMember.text = "+ ADD MEMBER"; btnAddMember.setBackgroundColor(Color.TRANSPARENT); btnAddMember.setTextColor(Color.LTGRAY); btnAddMember.setOnClickListener { performHaptic(); addRow() }; mainLayout.addView(btnAddMember)
+
+        fun addRow(nameVal: String = "", amtVal: String = "") {
+            val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL; row.setPadding(0, 10, 0, 10)
+            val nEd = EditText(this); nEd.hint = "Name"; nEd.setText(nameVal); nEd.setTextColor(getDynamicTextColor()); nEd.setHintTextColor(Color.GRAY); nEd.layoutParams = LinearLayout.LayoutParams(0, -2, 1.5f)
+            val aEd = EditText(this); aEd.hint = "0.00"; aEd.setText(amtVal); aEd.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL; aEd.setTextColor(getDynamicTextColor()); aEd.setHintTextColor(Color.GRAY); aEd.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+
+            // OWNER FIX: Add listener for manual entry shopping logic
+            aEd.addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) { updateRemaining() }
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            })
+
+            row.addView(nEd); row.addView(aEd); rowsContainer.addView(row)
+            rowList.add(Pair(nEd, aEd))
+        }
+
+        // Pre-fill if editing
+        if (isEditMode) {
+            val existingSplits = expenseList.filter { it.startsWith(SPLIT_PREFIX) && it.contains("[$category]") }
+            for (line in existingSplits) {
+                // Line format: "↳ [Category] Name: ₹Amount"
+                try {
+                    val clean = line.substringAfter("]").trim()
+                    val parts = clean.split(":")
+                    if(parts.size == 2) {
+                        val n = parts[0].trim()
+                        val a = parts[1].replace("₹","").trim()
+                        addRow(n, a)
+                    }
+                } catch(e: Exception){}
+            }
+            if(existingSplits.isEmpty()) { addRow(); addRow() }
+        } else {
+            addRow(); addRow()
+        }
+        updateRemaining() // Init calculation
+
+        val btnAddMember = Button(this); btnAddMember.text = "+ ADD MEMBER"; btnAddMember.setBackgroundColor(Color.TRANSPARENT); btnAddMember.setTextColor(Color.LTGRAY)
+        btnAddMember.setOnClickListener { performHaptic(); addRow() }; mainLayout.addView(btnAddMember)
+
         val btnEqual = Button(this); btnEqual.text = "⚖️ Split Equally"; btnEqual.setBackgroundColor(Color.DKGRAY); btnEqual.setTextColor(Color.WHITE); btnEqual.setOnClickListener {
-            val activeRows = rowList.filter { it.first.text.toString().isNotEmpty() }
+            val activeRows = rowList
             if (activeRows.isNotEmpty()) {
                 val count = activeRows.size; val baseShare = totalAmount.divide(BigDecimal(count), 2, RoundingMode.FLOOR)
                 var remainder = totalAmount.subtract(baseShare.multiply(BigDecimal(count))); val penny = BigDecimal("0.01")
-                for (pair in activeRows) { var share = baseShare; if (remainder > BigDecimal.ZERO) { share = share.add(penny); remainder = remainder.subtract(penny) }; pair.second.setText(share.toPlainString()) }
-            } else showFastToast("Enter names first!")
+                for (pair in activeRows) {
+                    var share = baseShare; if (remainder > BigDecimal.ZERO) { share = share.add(penny); remainder = remainder.subtract(penny) }
+                    pair.second.setText(share.toPlainString())
+                }
+            }
         }; mainLayout.addView(btnEqual)
-        val btnSave = Button(this); btnSave.text = "SAVE SPLITS"; btnSave.setBackgroundColor(Color.parseColor("#008800")); btnSave.setTextColor(Color.WHITE); mainLayout.addView(btnSave)
+
+        // Remove Split Button (Only if Editing)
+        if(isEditMode) {
+            val btnRemove = Button(this)
+            btnRemove.text = "🗑️ REMOVE SPLIT ONLY"
+            btnRemove.setTextColor(Color.RED)
+            btnRemove.setBackgroundColor(Color.TRANSPARENT)
+            btnRemove.setOnClickListener {
+                performHaptic()
+                // Delete only the splits for this category
+                expenseList.removeIf { it.startsWith(SPLIT_PREFIX) && it.contains("[$category]") }
+                expenseAdapter.notifyDataSetChanged()
+                saveSheetData(currentSheetID)
+                // Close Dialog manually by triggering negative button logic or finding dialog
+                showFastToast("Split Removed")
+                // We can't easily dismiss the dialog from here without a reference, so we rely on user closing or standard flow.
+                // A trick is to use a flag or just let user close.
+            }
+            mainLayout.addView(btnRemove)
+        }
+
+        val btnSave = Button(this); btnSave.text = "SAVE SPLITS"; btnSave.setBackgroundColor(Color.parseColor("#008800")); btnSave.setTextColor(Color.WHITE)
+        mainLayout.addView(btnSave)
+
         val dialog = AlertDialog.Builder(this).setView(scrollView).create()
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
         btnSave.setOnClickListener {
             var sum = BigDecimal.ZERO; val validSplits = ArrayList<String>()
-            for (pair in rowList) { val n = pair.first.text.toString(); val a = pair.second.text.toString(); if (n.isNotEmpty() && a.isNotEmpty()) { val amt = a.toBigDecimalOrNull() ?: BigDecimal.ZERO; sum = sum.add(amt); validSplits.add("$SPLIT_PREFIX $n: ₹${formatBigDecimal(amt)}") } }
-            if (sum.subtract(totalAmount).abs() < BigDecimal("0.05")) {
-                performHaptic(); for (i in validSplits.size - 1 downTo 0) expenseList.add(position + 1, validSplits[i])
-                expenseAdapter.notifyDataSetChanged(); saveSheetData(currentSheetID); dialog.dismiss(); showFastToast("Splits Added")
-            } else showFastToast("Sum (₹$sum) must match Total (₹$totalAmount)")
-        }
-        dialog.window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); dialog.show()
-    }
+            for (pair in rowList) {
+                val n = pair.first.text.toString(); val a = pair.second.text.toString()
+                if (n.isNotEmpty() && a.isNotEmpty()) {
+                    val amt = a.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                    sum = sum.add(amt)
+                    // STORE WITH TAG
+                    validSplits.add("$SPLIT_PREFIX [$category] $n: ₹${formatBigDecimal(amt)}")
+                }
+            }
 
-    inner class SummaryAdapter(private val data: ArrayList<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() {
-        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) { val nameView: TextView = view.findViewById(R.id.itemName); val priceView: TextView = view.findViewById(R.id.itemPrice) }
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder = ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false))
-        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            val item = data[position]; val parts = item.split(":"); if(parts.size == 2) { holder.nameView.text = parts[0].trim(); val pVal = parts[1].replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO; holder.priceView.text = "₹" + formatBigDecimal(pVal) } else { holder.nameView.text = item; holder.priceView.text = "" }
-            holder.nameView.setTextColor(Color.CYAN); holder.priceView.setTextColor(Color.CYAN)
+            // Allow small error margin
+            if (sum.subtract(totalAmount).abs() < BigDecimal("1.00")) {
+                performHaptic()
+                // 1. Remove old splits for this category first
+                expenseList.removeIf { it.startsWith(SPLIT_PREFIX) && it.contains("[$category]") }
+
+                // 2. Add new splits at the END of the list (since they are summary-based, not tied to specific item index)
+                expenseList.addAll(validSplits)
+
+                expenseAdapter.notifyDataSetChanged()
+                saveSheetData(currentSheetID)
+                dialog.dismiss()
+                showFastToast("Splits Saved")
+            } else {
+                showFastToast("Sum (₹$sum) must match Total (₹$totalAmount)")
+            }
         }
-        override fun getItemCount() = data.size
+        dialog.window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+        dialog.show()
     }
 
     private fun addExpenseItem(name: String, emoji: String, priceVal: Double) {
-        val priceBD = BigDecimal.valueOf(priceVal); val potentialTotal = grandTotal.add(priceBD)
-        if (potentialTotal >= MAX_TOTAL_LIMIT) { showFastToast("Max Total Reached! (12 Digits)"); return }
-        grandTotal = potentialTotal; topd.text = "₹${formatBigDecimal(grandTotal)}"; expenseList.add("$emoji $name: ₹${formatBigDecimal(priceBD)}"); expenseAdapter.notifyDataSetChanged(); fullHistoryAdapter.notifyDataSetChanged(); calculateCategoryTotals(); saveSheetData(currentSheetID)
-        if (expenseList.isNotEmpty()) hisd.smoothScrollToPosition(expenseList.size - 1); secd.text = "Saved!"; isDisplayingResult = true; isNewEntry = true
+        val priceBD = BigDecimal.valueOf(priceVal)
+        val potentialTotal = grandTotal.add(priceBD)
+
+        // --- OWNER FIX: BAD MATH PREVENTION (NEGATIVE TOTAL) ---
+        if (priceVal < 0) {
+            // Find current total for this specific category (name)
+            var currentCatTotal = BigDecimal.ZERO
+            for (item in expenseList) {
+                if (item.startsWith(SPLIT_PREFIX)) continue
+                val parts = item.split(":")
+                if (parts.size == 2 && parts[0].trim() == name) {
+                    val p = parts[1].replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO
+                    currentCatTotal = currentCatTotal.add(p)
+                }
+            }
+            // Check if adding this negative value makes the category negative
+            if (currentCatTotal.add(priceBD) < BigDecimal.ZERO) {
+                showFastToast("❌ Denied: $name cannot be negative")
+                performHaptic() // Error feedback
+                return
+            }
+        }
+
+        if (potentialTotal >= MAX_TOTAL_LIMIT) { showFastToast("Max Total Reached!"); return }
+
+        grandTotal = potentialTotal
+        topd.text = "₹${formatBigDecimal(grandTotal)}"
+        expenseList.add("$emoji $name: ₹${formatBigDecimal(priceBD)}")
+        expenseAdapter.notifyDataSetChanged()
+        fullHistoryAdapter.notifyDataSetChanged()
+        calculateCategoryTotals()
+        saveSheetData(currentSheetID)
+        if (expenseList.isNotEmpty()) hisd.smoothScrollToPosition(expenseList.size - 1)
+        secd.text = "Saved!"
+        isDisplayingResult = true
+        isNewEntry = true
     }
 
     private fun deleteItem(pos: Int) {
         performHaptic(); val item = expenseList[pos]
         if (!item.startsWith(SPLIT_PREFIX)) { val priceStr = item.substringAfter("₹").trim(); val priceBD = priceStr.toBigDecimalOrNull() ?: BigDecimal.ZERO; grandTotal = grandTotal.subtract(priceBD); if(grandTotal < BigDecimal.ZERO) grandTotal = BigDecimal.ZERO }
         topd.text = "₹${formatBigDecimal(grandTotal)}"; expenseList.removeAt(pos)
-        while (pos < expenseList.size && expenseList[pos].startsWith(SPLIT_PREFIX)) expenseList.removeAt(pos)
+        // OWNER FIX: Do NOT auto-delete splits below, as splits are now tagged at end of list or elsewhere.
+        // We only remove splits if they are "orphan" splits (untagged) which shouldn't exist in new system.
+        // For safety, we leave the split logic in Summary control.
         expenseAdapter.notifyDataSetChanged(); fullHistoryAdapter.notifyDataSetChanged(); calculateCategoryTotals(); saveSheetData(currentSheetID); showFastToast("Deleted")
     }
 
@@ -714,9 +971,8 @@ class MainActivity : AppCompatActivity() {
                 if (isNewEntry) isNewEntry = false
                 val current = secd.text.toString()
                 if (current.isNotEmpty()) {
-                    if ("+-×÷".contains(current.last())) secd.text = current.dropLast(1) + op
-                    else secd.append(op)
-                } else if (op == "-") secd.append("-") // OWNER FIX: Allow leading minus for negative start
+                    if ("+-×÷".contains(current.last())) secd.text = current.dropLast(1) + op else secd.append(op)
+                } else if (op == "-") secd.append("-")
             }
         }
         findViewById<Button>(R.id.btnDel).setOnClickListener { performHaptic(); val s = secd.text.toString(); if (s.isNotEmpty() && !isDisplayingResult) { secd.text = s.dropLast(1); if (secd.text.isEmpty()) secd.text = "0" } }
