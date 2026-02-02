@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     // KSP Plugin for Room
-    id("com.google.devtools.ksp") version "2.1.0-1.0.29"
+    id("com.google.devtools.ksp") version "1.9.24-1.0.20"
 }
 
 android {
