@@ -67,6 +67,7 @@ class MainActivity : AppCompatActivity() {
     private val MAX_INPUT_DIGITS = 9
     private val MAX_TOTAL_LIMIT = BigDecimal("1000000000000") // 1 Trillion
     private val SPLIT_PREFIX = "↳"
+    private val SPLIT_HEADER_TEXT = "--- BILL SPLIT ---"
 
     private var currentSheetID = 1
     private var maxSheetID = 1
@@ -211,8 +212,7 @@ class MainActivity : AppCompatActivity() {
         chartContainer = findViewById(R.id.chartContainer)
         btnCloseChart = findViewById(R.id.btnCloseChart)
 
-        // Full History (Time Machine) - Uses master expenseList (Maybe show all?)
-        // Let's hide splits here too to be consistent
+        // Full History (Time Machine) - Uses master expenseList
         fullHistoryAdapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, historyDisplayList) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = super.getView(position, convertView, parent) as TextView
@@ -664,7 +664,19 @@ class MainActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = data[position];
 
-            if (item.startsWith(SPLIT_PREFIX)) {
+            if (item == SPLIT_HEADER_TEXT) {
+                // --- HEADER LOGIC (NEW) ---
+                holder.nameView.text = item
+                holder.nameView.setTextColor(Color.YELLOW) // Distinct Color
+                holder.priceView.text = ""
+
+                // LONG PRESS TO DELETE ENTIRE SPLIT
+                holder.itemView.setOnLongClickListener {
+                    performHaptic()
+                    confirmDeleteSplit()
+                    true
+                }
+            } else if (item.startsWith(SPLIT_PREFIX)) {
                 // RENDER SPLIT ITEM
                 val cleanItem = item.replace(SPLIT_PREFIX, "").trim(); val parts = cleanItem.split(":")
                 var nameDisplay = parts.getOrElse(0){""}
@@ -693,6 +705,30 @@ class MainActivity : AppCompatActivity() {
             }
         }
         override fun getItemCount() = data.size
+    }
+
+    private fun confirmDeleteSplit() {
+        if(isSheetLocked) { showFastToast("Unlock to delete!"); return }
+        AlertDialog.Builder(this)
+            .setTitle("Remove Split?")
+            .setMessage("Remove the bill split/members? The Total Amount remains.")
+            .setPositiveButton("REMOVE") { _, _ ->
+                performHaptic()
+                // REMOVE ALL SPLIT ITEMS FROM DATA
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    expenseList.removeIf { it.startsWith(SPLIT_PREFIX) }
+                } else {
+                    val toRemove = ArrayList<String>()
+                    for (item in expenseList) { if (item.startsWith(SPLIT_PREFIX)) toRemove.add(item) }
+                    expenseList.removeAll(toRemove)
+                }
+
+                calculateCategoryTotals() // This will remove the header since splits are empty
+                saveSheetData(currentSheetID)
+                showFastToast("Split Removed")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun performDeleteCategory(category: String) {
@@ -930,7 +966,7 @@ class MainActivity : AppCompatActivity() {
 
         // APPEND SPLITS TO SUMMARY
         if(splits.isNotEmpty()) {
-            summaryList.add("--- BILL SPLIT ---") // Separator
+            summaryList.add(SPLIT_HEADER_TEXT) // Separator
             summaryList.addAll(splits)
         }
 
