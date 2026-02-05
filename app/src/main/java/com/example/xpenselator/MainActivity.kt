@@ -654,28 +654,112 @@ class MainActivity : AppCompatActivity() {
     private fun getHardwareID(): Int { try { val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "random"; val hash = abs(androidId.hashCode()); return (hash % 9000) + 1000 } catch (e: Exception) { return 9999 } }
 
     private fun showUpsellDialog() {
-        performHaptic(); val layout = LinearLayout(this); layout.orientation = LinearLayout.VERTICAL; layout.setPadding(50, 40, 50, 10)
-        val idText = TextView(this); idText.text = "Device ID: $deviceRequestID"; idText.setTextColor(Color.YELLOW); idText.textSize = 24f; idText.typeface = Typeface.DEFAULT_BOLD; idText.textAlignment = View.TEXT_ALIGNMENT_CENTER; layout.addView(idText)
-        val instr = TextView(this); instr.text = "To Activate PRO Mode:\n\n1. Tap button below.\n2. Send ID + Pay Screenshot.\n3. Get Code."; instr.setTextColor(Color.LTGRAY); instr.textSize = 15f; layout.addView(instr)
-        val btnBuy = Button(this); btnBuy.text = "🤖 OPEN TELEGRAM BOT"; btnBuy.setBackgroundColor(Color.parseColor("#0088cc")); btnBuy.setTextColor(Color.WHITE); btnBuy.setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PAYMENT_LINK))) }; layout.addView(btnBuy)
-        val input = EditText(this); input.hint = "Enter Unlock Code"; input.setTextColor(getDynamicTextColor()); input.setHintTextColor(Color.GRAY); layout.addView(input)
-        AlertDialog.Builder(this).setTitle("💎 Upgrade to PRO").setView(layout).setPositiveButton("UNLOCK") { _, _ ->
-            // NEW CODE:
-            val enteredCode = input.text.toString().toIntOrNull() ?: -1 
-            if (enteredCode == generateSecureCode(deviceRequestID)) { 
-                isProVersion = true 
-                // Save the specific code so we can check it on startup 
-                getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE) 
-                    .edit() 
-                    .putInt("SAVED_UNLOCK_CODE", enteredCode) 
-                    .apply() 
+        performHaptic()
+        
+        // 1. Create the Main Layout
+        val layout = LinearLayout(this)
+        layout.orientation = LinearLayout.VERTICAL
+        layout.setPadding(50, 40, 50, 10)
+ 
+        // 2. CUSTOM HEADER (Fixes the invisible title issue)
+        val titleView = TextView(this)
+        titleView.text = "💎 Upgrade to PRO"
+        titleView.textSize = 22f
+        // Force Cyan color so it is always visible on dark backgrounds
+        titleView.setTextColor(Color.CYAN)
+        titleView.typeface = Typeface.DEFAULT_BOLD
+        titleView.gravity = Gravity.CENTER
+        titleView.setPadding(0, 0, 0, 20)
+        layout.addView(titleView)
+ 
+        // 3. Device ID Display
+        val idText = TextView(this)
+        idText.text = "Device ID: $deviceRequestID"
+        idText.setTextColor(Color.YELLOW)
+        idText.textSize = 18f
+        idText.typeface = Typeface.DEFAULT_BOLD
+        idText.gravity = Gravity.CENTER
+        layout.addView(idText)
+ 
+        // 4. Instructions
+        val instr = TextView(this)
+        instr.text = "\nTo Activate PRO Mode:\n1. Copy UPI ID below & Pay.\n2. Send Screenshot + ID to Bot."
+        instr.setTextColor(Color.LTGRAY)
+        instr.textSize = 14f
+        layout.addView(instr)
+ 
+        // 5. UPI ID BOX with COPY BUTTON
+        val upiBox = LinearLayout(this)
+        upiBox.orientation = LinearLayout.HORIZONTAL
+        upiBox.setPadding(0, 20, 0, 20)
+        upiBox.gravity = Gravity.CENTER_VERTICAL
+        
+        // The ID text
+        val upiIdString = "paytmqr2810050501011e876976d7ua@paytm"
+        val upiText = TextView(this)
+        upiText.text = upiIdString
+        upiText.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+        upiText.textSize = 12f // Smaller text to fit the long ID
+        upiText.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        upiBox.addView(upiText)
+ 
+        // The Copy Button
+        val btnCopy = Button(this)
+        btnCopy.text = "COPY"
+        btnCopy.textSize = 12f
+        btnCopy.background.setTint(Color.DKGRAY)
+        btnCopy.setTextColor(Color.WHITE)
+        btnCopy.setOnClickListener {
+            performHaptic()
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = android.content.ClipData.newPlainText("UPI ID", upiIdString)
+            clipboard.setPrimaryClip(clip)
+            showFastToast("✅ UPI ID Copied!")
+        }
+        upiBox.addView(btnCopy)
+        
+        layout.addView(upiBox)
+ 
+        // 6. Telegram Bot Button
+        val btnBuy = Button(this)
+        btnBuy.text = "🤖 OPEN TELEGRAM BOT"
+        btnBuy.setBackgroundColor(Color.parseColor("#0088cc"))
+        btnBuy.setTextColor(Color.WHITE)
+        btnBuy.setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PAYMENT_LINK))) }
+        layout.addView(btnBuy)
+ 
+        // 7. Input Field for Code
+        val input = EditText(this)
+        input.hint = "Enter Unlock Code"
+        input.setTextColor(getDynamicTextColor())
+        input.setHintTextColor(Color.GRAY)
+        layout.addView(input)
+ 
+        // 8. Build and Show Dialog (Removed .setTitle since we added a custom view)
+        AlertDialog.Builder(this)
+            .setView(layout)
+            .setPositiveButton("UNLOCK") { _, _ ->
+                val enteredCode = input.text.toString().toIntOrNull() ?: -1
+                if (enteredCode == generateSecureCode(deviceRequestID)) {
+                    isProVersion = true
+                    // Save the code persistently
+                    getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+                        .edit()
+                        .putInt("SAVED_UNLOCK_CODE", enteredCode)
+                        .apply()
                     
-                saveGlobalSettings() 
-                showFastToast("🚀 PRO UNLOCKED!") 
-            } else { 
-                showFastToast("❌ Wrong Code") 
+                    saveGlobalSettings()
+                    showFastToast("🚀 PRO UNLOCKED!")
+                } else {
+                    showFastToast("❌ Wrong Code")
+                }
             }
-        }.setNegativeButton("Cancel", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
+            .setNegativeButton("Cancel", null)
+            .create()
+            .apply {
+                window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+                show()
+            }
     }
 
     private fun deleteCurrentSheet() { if (maxSheetID <= 1) { showFastToast("Cannot delete only sheet!"); return }; performHaptic(); AlertDialog.Builder(this).setTitle("Delete Sheet?").setMessage("Are you sure?").setPositiveButton("DELETE") { _, _ -> performDeleteSheetLogic() }.setNegativeButton("Cancel", null).show() }
