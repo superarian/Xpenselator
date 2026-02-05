@@ -660,7 +660,21 @@ class MainActivity : AppCompatActivity() {
         val btnBuy = Button(this); btnBuy.text = "🤖 OPEN TELEGRAM BOT"; btnBuy.setBackgroundColor(Color.parseColor("#0088cc")); btnBuy.setTextColor(Color.WHITE); btnBuy.setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PAYMENT_LINK))) }; layout.addView(btnBuy)
         val input = EditText(this); input.hint = "Enter Unlock Code"; input.setTextColor(getDynamicTextColor()); input.setHintTextColor(Color.GRAY); layout.addView(input)
         AlertDialog.Builder(this).setTitle("💎 Upgrade to PRO").setView(layout).setPositiveButton("UNLOCK") { _, _ ->
-            if ((input.text.toString().toIntOrNull() ?: -1) == generateSecureCode(deviceRequestID)) { isProVersion = true; saveGlobalSettings(); showFastToast("🚀 PRO UNLOCKED!") } else { showFastToast("❌ Wrong Code") }
+            // NEW CODE:
+            val enteredCode = input.text.toString().toIntOrNull() ?: -1 
+            if (enteredCode == generateSecureCode(deviceRequestID)) { 
+                isProVersion = true 
+                // Save the specific code so we can check it on startup 
+                getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE) 
+                    .edit() 
+                    .putInt("SAVED_UNLOCK_CODE", enteredCode) 
+                    .apply() 
+                    
+                saveGlobalSettings() 
+                showFastToast("🚀 PRO UNLOCKED!") 
+            } else { 
+                showFastToast("❌ Wrong Code") 
+            }
         }.setNegativeButton("Cancel", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
     }
 
@@ -979,7 +993,28 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { return 0.0 }
     }
 
-    private fun loadGlobalSettings() { val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE); isSoundOn = prefs.getBoolean("SOUND", true); isVibrationOn = prefs.getBoolean("VIB", true); isDarkMode = prefs.getBoolean("DARK_MODE", true); isProVersion = prefs.getBoolean("IS_PRO", false); maxSheetID = prefs.getInt("MAX_SHEETS", 1); currentSheetID = prefs.getInt("LAST_OPEN_SHEET", 1) }
+    private fun loadGlobalSettings() {
+        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+        
+        // 1. Load standard settings
+        isSoundOn = prefs.getBoolean("SOUND", true)
+        isVibrationOn = prefs.getBoolean("VIB", true)
+        isDarkMode = prefs.getBoolean("DARK_MODE", true)
+        maxSheetID = prefs.getInt("MAX_SHEETS", 1)
+        currentSheetID = prefs.getInt("LAST_OPEN_SHEET", 1)
+    
+        // 2. SECURITY CHECK:
+        // We ignore the simple boolean "IS_PRO" and re-calculate the math.
+        val savedCode = prefs.getInt("SAVED_UNLOCK_CODE", -1)
+        val expectedCode = generateSecureCode(deviceRequestID)
+    
+        // If the saved code matches THIS device's math, grant Pro.
+        if (savedCode == expectedCode) {
+            isProVersion = true
+        } else {
+            isProVersion = false
+        }
+    }
     private fun saveGlobalSettings() { getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit().putBoolean("SOUND", isSoundOn).putBoolean("VIB", isVibrationOn).putBoolean("DARK_MODE", isDarkMode).putBoolean("IS_PRO", isProVersion).putInt("MAX_SHEETS", maxSheetID).putInt("LAST_OPEN_SHEET", currentSheetID).apply() }
     private fun performHaptic() { if (isVibrationOn) { if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(50, -1)) else vibrator.vibrate(50) }; if (isSoundOn) toneGen.startTone(1, 50) }
     private fun showFastToast(msg: String) { currentToast?.cancel(); currentToast = Toast.makeText(this, msg, 0); currentToast?.show() }
