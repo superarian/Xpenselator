@@ -50,6 +50,7 @@ class MainActivity : AppCompatActivity() {
 
     // --- FREEMIUM & SECURITY ---
     private var isProVersion = false
+    private val PRO_PRICE = "₹99" // NEW: Defined price centrally
     private val FREE_SHEET_LIMIT = 3
     private val SECRET_SALT = "BYTESKULL_MAKES_APPS_2026"
     private val PAYMENT_LINK = "https://t.me/Xpenselator_Bot"
@@ -330,7 +331,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } else {
-            // LIGHT MODE FIXES
             window.statusBarColor = Color.parseColor("#E0E0E0")
             rootView.setBackgroundColor(Color.parseColor("#F5F5F5"))
             headerBox.setBackgroundColor(Color.WHITE)
@@ -511,22 +511,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun sharePdfReport() {
         if (!isProVersion) { showUpsellDialog(); return }; performHaptic()
-        val scrollView = ScrollView(this); val layout = LinearLayout(this);
-        layout.orientation = LinearLayout.VERTICAL; layout.setPadding(50, 40, 50, 10); scrollView.addView(layout)
-        val titleInput = EditText(this);
-        titleInput.hint = "Report Title"; titleInput.setTextColor(getDynamicTextColor()); titleInput.setHintTextColor(Color.GRAY); layout.addView(titleInput)
-        val sub = TextView(this);
-        sub.text = "\nSelect Sheets:"; sub.setTextColor(Color.CYAN); layout.addView(sub)
+        val scrollView = ScrollView(this); val layout = LinearLayout(this); layout.orientation = LinearLayout.VERTICAL; layout.setPadding(50, 40, 50, 10); scrollView.addView(layout)
+        val titleInput = EditText(this); titleInput.hint = "Report Title"; titleInput.setTextColor(getDynamicTextColor()); titleInput.setHintTextColor(Color.GRAY); layout.addView(titleInput)
+        val sub = TextView(this); sub.text = "\nSelect Sheets:"; sub.setTextColor(Color.CYAN); layout.addView(sub)
         val checkBoxList = ArrayList<CheckBox>()
         for (i in 1..maxSheetID) {
-            val cb = CheckBox(this);
-            cb.text = getSheetName(i); cb.setTextColor(if(isDarkMode) Color.LTGRAY else Color.DKGRAY)
-            if(i == currentSheetID) cb.isChecked = true;
-            checkBoxList.add(cb); layout.addView(cb); cb.tag = i
+            val cb = CheckBox(this); cb.text = getSheetName(i); cb.setTextColor(if(isDarkMode) Color.LTGRAY else Color.DKGRAY)
+            if(i == currentSheetID) cb.isChecked = true; checkBoxList.add(cb); layout.addView(cb); cb.tag = i
         }
-        val titleView = TextView(this);
-        titleView.text = "📄 Generate Report"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20);
-        titleView.gravity = Gravity.CENTER
+        val titleView = TextView(this); titleView.text = "📄 Generate Report"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.gravity = Gravity.CENTER
         AlertDialog.Builder(this).setCustomTitle(titleView).setView(scrollView).setPositiveButton("GENERATE PDF") { _, _ ->
             val selectedIDs = ArrayList<Int>()
             for(cb in checkBoxList) { if(cb.isChecked) selectedIDs.add(cb.tag as Int) }
@@ -623,8 +616,8 @@ class MainActivity : AppCompatActivity() {
                             // Define Rect for the Glossy Bar
                             val rect = RectF(50f, y, 50f + safeWidth, y + 25f)
 
-                            // Use Shared Glossy Render
-                            GlossyRender.drawGlossyBar(canvas, rect, barColor, paintBar)
+                            // NEW: Use Shared Glossy Render, passing 'true' to trigger PDF-safe colors
+                            GlossyRender.drawGlossyBar(canvas, rect, barColor, paintBar, isPdf = true)
 
                             // Draw Text ON TOP of the PDF bar (White with shadow)
                             val barTextPaint = Paint().apply {
@@ -655,12 +648,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun showUpsellDialog() {
         performHaptic()
-        
+
         // 1. Create the Main Layout
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
         layout.setPadding(50, 40, 50, 10)
- 
+
         // 2. CUSTOM HEADER (Fixes the invisible title issue)
         val titleView = TextView(this)
         titleView.text = "💎 Upgrade to PRO"
@@ -671,7 +664,7 @@ class MainActivity : AppCompatActivity() {
         titleView.gravity = Gravity.CENTER
         titleView.setPadding(0, 0, 0, 20)
         layout.addView(titleView)
- 
+
         // 3. Device ID Display
         val idText = TextView(this)
         idText.text = "Device ID: $deviceRequestID"
@@ -680,20 +673,20 @@ class MainActivity : AppCompatActivity() {
         idText.typeface = Typeface.DEFAULT_BOLD
         idText.gravity = Gravity.CENTER
         layout.addView(idText)
- 
-        // 4. Instructions
+
+        // 4. Instructions (NEW: Price constant added here)
         val instr = TextView(this)
-        instr.text = "\nTo Activate PRO Mode:\n1. Copy UPI ID below & Pay.\n2. Send Screenshot + ID to Bot."
+        instr.text = "\nTo Activate PRO Mode:\n1. Copy UPI ID below & Pay $PRO_PRICE.\n2. Send Screenshot + ID to Bot."
         instr.setTextColor(Color.LTGRAY)
         instr.textSize = 14f
         layout.addView(instr)
- 
+
         // 5. UPI ID BOX with COPY BUTTON
         val upiBox = LinearLayout(this)
         upiBox.orientation = LinearLayout.HORIZONTAL
         upiBox.setPadding(0, 20, 0, 20)
         upiBox.gravity = Gravity.CENTER_VERTICAL
-        
+
         // The ID text
         val upiIdString = "paytmqr2810050501011e876976d7ua@paytm"
         val upiText = TextView(this)
@@ -702,7 +695,7 @@ class MainActivity : AppCompatActivity() {
         upiText.textSize = 12f // Smaller text to fit the long ID
         upiText.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         upiBox.addView(upiText)
- 
+
         // The Copy Button
         val btnCopy = Button(this)
         btnCopy.text = "COPY"
@@ -717,9 +710,9 @@ class MainActivity : AppCompatActivity() {
             showFastToast("✅ UPI ID Copied!")
         }
         upiBox.addView(btnCopy)
-        
+
         layout.addView(upiBox)
- 
+
         // 6. Telegram Bot Button
         val btnBuy = Button(this)
         btnBuy.text = "🤖 OPEN TELEGRAM BOT"
@@ -727,14 +720,14 @@ class MainActivity : AppCompatActivity() {
         btnBuy.setTextColor(Color.WHITE)
         btnBuy.setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PAYMENT_LINK))) }
         layout.addView(btnBuy)
- 
+
         // 7. Input Field for Code
         val input = EditText(this)
         input.hint = "Enter Unlock Code"
         input.setTextColor(getDynamicTextColor())
         input.setHintTextColor(Color.GRAY)
         layout.addView(input)
- 
+
         // 8. Build and Show Dialog (Removed .setTitle since we added a custom view)
         AlertDialog.Builder(this)
             .setView(layout)
@@ -747,7 +740,7 @@ class MainActivity : AppCompatActivity() {
                         .edit()
                         .putInt("SAVED_UNLOCK_CODE", enteredCode)
                         .apply()
-                    
+
                     saveGlobalSettings()
                     showFastToast("🚀 PRO UNLOCKED!")
                 } else {
@@ -779,6 +772,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadSheetData(sheetId: Int) {
         val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
         val listString = prefs.getString("LIST_$sheetId", "")
+
         isSheetLocked = prefs.getBoolean("LOCKED_$sheetId", false)
         expenseList.clear(); grandTotal = BigDecimal.ZERO
 
@@ -1079,20 +1073,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadGlobalSettings() {
         val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
-        
+
         // 1. Load standard settings
         isSoundOn = prefs.getBoolean("SOUND", true)
         isVibrationOn = prefs.getBoolean("VIB", true)
         isDarkMode = prefs.getBoolean("DARK_MODE", true)
         maxSheetID = prefs.getInt("MAX_SHEETS", 1)
         currentSheetID = prefs.getInt("LAST_OPEN_SHEET", 1)
-    
+
         // 2. SECURITY CHECK:
-        // We ignore the simple boolean "IS_PRO" and re-calculate the math.
         val savedCode = prefs.getInt("SAVED_UNLOCK_CODE", -1)
         val expectedCode = generateSecureCode(deviceRequestID)
-    
-        // If the saved code matches THIS device's math, grant Pro.
+
         if (savedCode == expectedCode) {
             isProVersion = true
         } else {
