@@ -13,7 +13,6 @@ class ExpenseRepository(
 ) {
     private val prefs: SharedPreferences = context.getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
 
-    // --- SHEET MANAGEMENT (ROOM DATABASE) ---
     fun getExpensesForSheet(sheetId: Int): List<ExpenseEntity> {
         return expenseDao.getExpensesForSheet(sheetId)
     }
@@ -32,6 +31,24 @@ class ExpenseRepository(
 
     fun deleteCategory(sheetId: Int, categoryName: String) {
         expenseDao.deleteCategory(sheetId, categoryName)
+    }
+
+    fun getGroupMembers(sheetId: Int): List<String> {
+        val str = prefs.getString("GROUP_$sheetId", "") ?: ""
+        return if (str.isEmpty()) emptyList() else str.split(",")
+    }
+
+    fun saveGroupMembers(sheetId: Int, members: List<String>) {
+        prefs.edit().putString("GROUP_$sheetId", members.joinToString(",")).apply()
+    }
+
+    // --- NEW: GLOBAL SPLIT PERCENTAGE CONFIG ---
+    fun getGlobalSplitPercentages(sheetId: Int): String {
+        return prefs.getString("SPLIT_PERC_$sheetId", "") ?: ""
+    }
+
+    fun saveGlobalSplitConfig(sheetId: Int, percentages: String) {
+        prefs.edit().putString("SPLIT_PERC_$sheetId", percentages).apply()
     }
 
     // --- GLOBAL SETTINGS ---
@@ -53,7 +70,6 @@ class ExpenseRepository(
         prefs.edit().putBoolean("LOCKED_$sheetId", locked).apply()
     }
 
-    // --- SECURITY & ID ---
     fun getHardwareID(): Int {
         return try {
             val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "random"
@@ -64,7 +80,6 @@ class ExpenseRepository(
         }
     }
 
-    // --- FIREBASE SYNC ---
     fun syncProStatus(deviceId: Int, onResult: (Boolean) -> Unit) {
         db.collection("PremiumUsers").document(deviceId.toString())
             .get()

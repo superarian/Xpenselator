@@ -8,5 +8,6 @@ data class ExpenseEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val sheetId: Int,
     val description: String,
-    val amount: String // Stored as String to avoid precision loss
+    val amount: String,
+    val assignedTo: String = "" // NEW: True Line-Item Tagging
 )
