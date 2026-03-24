@@ -62,4 +62,6 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:32.8.0"))
     // Add Firestore Database
     implementation("com.google.firebase:firebase-firestore")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
 }
