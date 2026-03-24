@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     // KSP Plugin for Room
     id("com.google.devtools.ksp") version "1.9.24-1.0.20"
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -55,4 +56,10 @@ dependencies {
 
     // KSP Compiler (Replaces KAPT)
     ksp("androidx.room:room-compiler:$room_version")
+
+    // --- FIREBASE ---
+    // Import the Firebase BoM (Bill of Materials)
+    implementation(platform("com.google.firebase:firebase-bom:32.8.0"))
+    // Add Firestore Database
+    implementation("com.google.firebase:firebase-firestore")
 }

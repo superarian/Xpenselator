@@ -1,6 +1,228 @@
+PROJECT EXPORT: Xpenselator
+Date: 03/20/2026 16:44:37
+=========================================
+
+
+
+--- START OF FILE: AppDatabase.kt ---
 package com.example.xpenselator
 
-import com.google.firebase.firestore.FirebaseFirestore
+import androidx.room.Database
+import androidx.room.RoomDatabase
+
+// OWNER FIX: Version 2 to trigger destructive migration so it doesn't crash on update
+@Database(entities = [ExpenseEntity::class], version = 2, exportSchema = false)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun expenseDao(): ExpenseDao
+}
+--- END OF FILE: AppDatabase.kt ---
+
+
+--- START OF FILE: ExpenseDao.kt ---
+package com.example.xpenselator
+
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.Query
+
+@Dao
+interface ExpenseDao {
+    @Query("SELECT * FROM expenses WHERE sheetId = :sheetId")
+    fun getExpensesForSheet(sheetId: Int): List<ExpenseEntity>
+
+    @Insert
+    fun insert(expense: ExpenseEntity)
+
+    @Delete
+    fun delete(expense: ExpenseEntity)
+
+    @Query("DELETE FROM expenses WHERE sheetId = :sheetId")
+    fun clearSheet(sheetId: Int)
+
+    // Advanced Owner Logic: Deletes items where description contains the category name
+    @Query("DELETE FROM expenses WHERE sheetId = :sheetId AND description LIKE '%' || :category || '%'")
+    fun deleteCategory(sheetId: Int, category: String)
+}
+--- END OF FILE: ExpenseDao.kt ---
+
+
+--- START OF FILE: ExpenseEntity.kt ---
+package com.example.xpenselator
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "expenses")
+data class ExpenseEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val sheetId: Int,
+    val description: String,
+    val amount: String // Stored as String to avoid precision loss
+)
+--- END OF FILE: ExpenseEntity.kt ---
+
+
+--- START OF FILE: GlossyBarView.kt ---
+package com.example.xpenselator
+
+import android.animation.ValueAnimator
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.util.AttributeSet
+import android.view.View
+import android.view.animation.DecelerateInterpolator
+
+// FIX: Added @JvmOverloads and 'attrs' so XML layout inflation works without crashing
+class GlossyBarView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
+
+    private var progress: Float = 0f // 0.0 to 1.0
+    private var targetProgress: Float = 0f
+    private var barColor: Int = Color.GRAY
+    private var labelText: String = ""
+    private var valueText: String = ""
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+
+    init {
+        textPaint.color = Color.WHITE
+        textPaint.textSize = 30f // Adjust size as needed
+        textPaint.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        textPaint.setShadowLayer(5f, 2f, 2f, Color.BLACK) // Text Shadow for readability
+    }
+
+    fun setup(name: String, value: String, percentage: Float, color: Int) {
+        this.labelText = name
+        this.valueText = value
+        this.targetProgress = percentage
+        this.barColor = color
+        invalidate()
+    }
+
+    // Call this to trigger the "Smooth and Fast" animation
+    fun animateBar() {
+        val animator = ValueAnimator.ofFloat(0f, targetProgress)
+        animator.duration = 600 // Fast but smooth (600ms)
+        animator.interpolator = DecelerateInterpolator() // Starts fast, slows at end
+        animator.addUpdateListener {
+            progress = it.animatedValue as Float
+            invalidate()
+        }
+        animator.start()
+    }
+
+    // For non-animated lists (Summary tab)
+    fun setStatic() {
+        progress = targetProgress
+        invalidate()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        // Fixed height for the bar rows
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), 100)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val w = width.toFloat()
+        val h = height.toFloat()
+
+        // Calculate Bar Width
+        val barWidth = w * progress
+
+        // Safety: Even if progress is 0, draw a tiny line so it looks valid
+        val drawWidth = if (barWidth < 20f) 20f else barWidth
+
+        rect.set(10f, 15f, drawWidth, h - 15f)
+
+        // Use the Shared Renderer
+        GlossyRender.drawGlossyBar(canvas, rect, barColor, paint)
+
+        // Draw Text ON TOP of the bar
+        val text = "$labelText: $valueText"
+        // Draw text slightly indented
+        canvas.drawText(text, 30f, (h / 2f) + 10f, textPaint)
+    }
+}
+--- END OF FILE: GlossyBarView.kt ---
+
+
+--- START OF FILE: GlossyRender.kt ---
+package com.example.xpenselator
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Shader
+
+object GlossyRender {
+
+    // Shared "Glass Tube" drawing logic
+    fun drawGlossyBar(
+        canvas: Canvas,
+        rect: RectF,
+        baseColor: Int,
+        paint: Paint,
+        isPdf: Boolean = false // NEW: Added PDF-awareness flag
+    ) {
+        val radius = rect.height() / 4f
+
+        if (isPdf) {
+            // PDF-Safe drawing: Strip shaders and use solid base color
+            paint.shader = null
+            paint.color = baseColor
+            canvas.drawRoundRect(rect, radius, radius, paint)
+        } else {
+            // 1. Draw Base Cylinder (Darker at bottom for roundness)
+            paint.shader = LinearGradient(
+                rect.left, rect.top, rect.left, rect.bottom,
+                intArrayOf(baseColor, darken(baseColor, 0.7f)),
+                null, Shader.TileMode.CLAMP
+            )
+            canvas.drawRoundRect(rect, radius, radius, paint)
+
+            // 2. Draw "Glass Highlight" (The white shine on top)
+            // We shrink the rect slightly so the shine sits inside
+            val shineRect = RectF(rect.left, rect.top, rect.right, rect.centerY())
+
+            paint.shader = LinearGradient(
+                shineRect.left, shineRect.top, shineRect.left, shineRect.bottom,
+                intArrayOf(Color.argb(100, 255, 255, 255), Color.TRANSPARENT),
+                null, Shader.TileMode.CLAMP
+            )
+            canvas.drawRoundRect(shineRect, radius, radius, paint)
+
+            // Reset Paint
+            paint.shader = null
+        }
+    }
+
+    private fun darken(color: Int, factor: Float): Int {
+        val a = Color.alpha(color)
+        val r = (Color.red(color) * factor).toInt()
+        val g = (Color.green(color) * factor).toInt()
+        val b = (Color.blue(color) * factor).toInt()
+        return Color.argb(a, r, g, b)
+    }
+}
+--- END OF FILE: GlossyRender.kt ---
+
+
+--- START OF FILE: MainActivity.kt ---
+package com.example.xpenselator
+
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
@@ -90,7 +312,6 @@ class MainActivity : AppCompatActivity() {
     private var isDarkMode = true
 
     // UI ELEMENTS
-    private lateinit var db: FirebaseFirestore
     private lateinit var rootView: RelativeLayout
     private lateinit var mainLayout: LinearLayout
     private lateinit var headerBox: RelativeLayout
@@ -153,10 +374,8 @@ class MainActivity : AppCompatActivity() {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
         setContentView(R.layout.activity_main)
 
-        // GRAB DEVICE ID AND INIT DATABASE FIRST
         vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         deviceRequestID = getHardwareID()
-        db = FirebaseFirestore.getInstance()
 
         // Bind Views
         rootView = findViewById(R.id.rootView)
@@ -254,12 +473,10 @@ class MainActivity : AppCompatActivity() {
         }
         fullHistoryList.adapter = fullHistoryAdapter
 
-        // NOW LOAD SETTINGS AND SYNC (AFTER VIEWS ARE BOUND)
         loadGlobalSettings()
         applyThemeManual()
         loadSheetData(currentSheetID)
         updateTabVisuals(0)
-        syncProStatusWithServer()
 
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
@@ -382,60 +599,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getDynamicTextColor(): Int = if (isDarkMode) Color.WHITE else Color.BLACK
-
-    private fun verifyPaymentWithFirebase(dialog: AlertDialog) {
-        showFastToast("Checking database...")
-
-        // Check the "PremiumUsers" collection for a document matching their ID
-        db.collection("PremiumUsers").document(deviceRequestID.toString())
-            .get()
-            .addOnSuccessListener { document ->
-                if (document != null && document.getBoolean("isPro") == true) {
-                    // Payment verified!
-                    isProVersion = true
-
-                    // Save it so it survives app restarts
-                    getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
-                        .edit()
-                        .putBoolean("IS_PRO", true)
-                        .apply()
-
-                    saveGlobalSettings()
-                    showFastToast("🚀 PRO UNLOCKED!")
-                    dialog.dismiss() // Close the upsell screen
-                } else {
-                    showFastToast("❌ Payment not found yet. Try again in a minute.")
-                }
-            }
-            .addOnFailureListener {
-                showFastToast("Network error. Check your internet connection.")
-            }
-    }
-
-    private fun syncProStatusWithServer() {
-        // Failsafe: Don't check if the ID is missing
-        if (deviceRequestID == 0 || deviceRequestID == 9999) return
-
-        db.collection("PremiumUsers").document(deviceRequestID.toString())
-            .get()
-            .addOnSuccessListener { document ->
-                // Check what the server says
-                val serverIsPro = document != null && document.getBoolean("isPro") == true
-
-                // If the server disagrees with the app, the server wins. Update the app.
-                if (isProVersion != serverIsPro) {
-                    isProVersion = serverIsPro
-                    getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
-                        .edit()
-                        .putBoolean("IS_PRO", serverIsPro)
-                        .apply()
-                }
-            }
-            .addOnFailureListener {
-                // Do absolutely nothing.
-                // If they are offline or in a bad signal area, we just trust the local memory.
-            }
-    }
 
     private fun showSettingsDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null)
@@ -681,7 +844,8 @@ class MainActivity : AppCompatActivity() {
 
                             // Draw Text ON TOP of the PDF bar (White with shadow)
                             val barTextPaint = Paint().apply {
-                                color = Color.WHITE; textSize = 14f; isFakeBoldText = true; setShadowLayer(3f, 1f, 1f, Color.BLACK)
+                                color = Color.WHITE; textSize = 14f; isFakeBoldText = true;
+                                setShadowLayer(3f, 1f, 1f, Color.BLACK)
                             }
                             canvas.drawText("$k: ${v.toInt()}", 60f, y + 18f, barTextPaint)
 
@@ -708,19 +872,23 @@ class MainActivity : AppCompatActivity() {
     private fun showUpsellDialog() {
         performHaptic()
 
+        // 1. Create the Main Layout
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
         layout.setPadding(50, 40, 50, 10)
 
+        // 2. CUSTOM HEADER (Fixes the invisible title issue)
         val titleView = TextView(this)
         titleView.text = "💎 Upgrade to PRO"
         titleView.textSize = 22f
+        // Force Cyan color so it is always visible on dark backgrounds
         titleView.setTextColor(Color.CYAN)
         titleView.typeface = Typeface.DEFAULT_BOLD
         titleView.gravity = Gravity.CENTER
         titleView.setPadding(0, 0, 0, 20)
         layout.addView(titleView)
 
+        // 3. Device ID Display
         val idText = TextView(this)
         idText.text = "Device ID: $deviceRequestID"
         idText.setTextColor(Color.YELLOW)
@@ -729,25 +897,29 @@ class MainActivity : AppCompatActivity() {
         idText.gravity = Gravity.CENTER
         layout.addView(idText)
 
+        // 4. Instructions (NEW: Price constant added here)
         val instr = TextView(this)
-        instr.text = "\nTo Activate PRO Mode:\n1. Copy UPI ID below & Pay $PRO_PRICE.\n2. Send Screenshot + Device ID to Bot.\n3. Click Verify below once approved."
+        instr.text = "\nTo Activate PRO Mode:\n1. Copy UPI ID below & Pay $PRO_PRICE.\n2. Send Screenshot + ID to Bot."
         instr.setTextColor(Color.LTGRAY)
         instr.textSize = 14f
         layout.addView(instr)
 
+        // 5. UPI ID BOX with COPY BUTTON
         val upiBox = LinearLayout(this)
         upiBox.orientation = LinearLayout.HORIZONTAL
         upiBox.setPadding(0, 20, 0, 20)
         upiBox.gravity = Gravity.CENTER_VERTICAL
 
+        // The ID text
         val upiIdString = "paytmqr2810050501011e876976d7ua@paytm"
         val upiText = TextView(this)
         upiText.text = upiIdString
         upiText.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
-        upiText.textSize = 12f
+        upiText.textSize = 12f // Smaller text to fit the long ID
         upiText.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         upiBox.addView(upiText)
 
+        // The Copy Button
         val btnCopy = Button(this)
         btnCopy.text = "COPY"
         btnCopy.textSize = 12f
@@ -761,8 +933,10 @@ class MainActivity : AppCompatActivity() {
             showFastToast("✅ UPI ID Copied!")
         }
         upiBox.addView(btnCopy)
+
         layout.addView(upiBox)
 
+        // 6. Telegram Bot Button
         val btnBuy = Button(this)
         btnBuy.text = "🤖 OPEN TELEGRAM BOT"
         btnBuy.setBackgroundColor(Color.parseColor("#0088cc"))
@@ -770,31 +944,38 @@ class MainActivity : AppCompatActivity() {
         btnBuy.setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PAYMENT_LINK))) }
         layout.addView(btnBuy)
 
-        // Create the dialog first so we can pass it to the verify function
-        val dialog = AlertDialog.Builder(this)
+        // 7. Input Field for Code
+        val input = EditText(this)
+        input.hint = "Enter Unlock Code"
+        input.setTextColor(getDynamicTextColor())
+        input.setHintTextColor(Color.GRAY)
+        layout.addView(input)
+
+        // 8. Build and Show Dialog (Removed .setTitle since we added a custom view)
+        AlertDialog.Builder(this)
             .setView(layout)
+            .setPositiveButton("UNLOCK") { _, _ ->
+                val enteredCode = input.text.toString().toIntOrNull() ?: -1
+                if (enteredCode == generateSecureCode(deviceRequestID)) {
+                    isProVersion = true
+                    // Save the code persistently
+                    getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+                        .edit()
+                        .putInt("SAVED_UNLOCK_CODE", enteredCode)
+                        .apply()
+
+                    saveGlobalSettings()
+                    showFastToast("🚀 PRO UNLOCKED!")
+                } else {
+                    showFastToast("❌ Wrong Code")
+                }
+            }
             .setNegativeButton("Cancel", null)
             .create()
-
-        // NEW: Replace the EditText input with a Verification Button
-        val btnVerify = Button(this)
-        btnVerify.text = "VERIFY PAYMENT"
-        btnVerify.setBackgroundColor(Color.parseColor("#00AA00")) // Green
-        btnVerify.setTextColor(Color.WHITE)
-        val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        params.setMargins(0, 20, 0, 0)
-        btnVerify.layoutParams = params
-
-        btnVerify.setOnClickListener {
-            performHaptic()
-            verifyPaymentWithFirebase(dialog)
-        }
-        layout.addView(btnVerify)
-
-        dialog.apply {
-            window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
-            show()
-        }
+            .apply {
+                window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+                show()
+            }
     }
 
     private fun deleteCurrentSheet() { if (maxSheetID <= 1) { showFastToast("Cannot delete only sheet!"); return }; performHaptic(); AlertDialog.Builder(this).setTitle("Delete Sheet?").setMessage("Are you sure?").setPositiveButton("DELETE") { _, _ -> performDeleteSheetLogic() }.setNegativeButton("Cancel", null).show() }
@@ -1123,8 +1304,15 @@ class MainActivity : AppCompatActivity() {
         maxSheetID = prefs.getInt("MAX_SHEETS", 1)
         currentSheetID = prefs.getInt("LAST_OPEN_SHEET", 1)
 
-        // 2. Load Local Pro Status (Fast Startup)
-        isProVersion = prefs.getBoolean("IS_PRO", false)
+        // 2. SECURITY CHECK:
+        val savedCode = prefs.getInt("SAVED_UNLOCK_CODE", -1)
+        val expectedCode = generateSecureCode(deviceRequestID)
+
+        if (savedCode == expectedCode) {
+            isProVersion = true
+        } else {
+            isProVersion = false
+        }
     }
     private fun saveGlobalSettings() { getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit().putBoolean("SOUND", isSoundOn).putBoolean("VIB", isVibrationOn).putBoolean("DARK_MODE", isDarkMode).putBoolean("IS_PRO", isProVersion).putInt("MAX_SHEETS", maxSheetID).putInt("LAST_OPEN_SHEET", currentSheetID).apply() }
     private fun performHaptic() { if (isVibrationOn) { if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(50, -1)) else vibrator.vibrate(50) }; if (isSoundOn) toneGen.startTone(1, 50) }
@@ -1133,3 +1321,646 @@ class MainActivity : AppCompatActivity() {
     private fun getSheetName(id: Int): String = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).getString("NAME_$id", "SHEET $id") ?: "SHEET $id"
     private fun showRenameDialog() { performHaptic(); val input = EditText(this); input.setText(getSheetName(currentSheetID)); input.setTextColor(getDynamicTextColor()); input.setHintTextColor(Color.GRAY); val titleView = TextView(this); titleView.text = "Rename Sheet"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER; AlertDialog.Builder(this).setCustomTitle(titleView).setView(input).setPositiveButton("SAVE") { _, _ -> val n = input.text.toString().trim(); if (n.isNotEmpty()) { getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit().putString("NAME_$currentSheetID", n).apply(); projectName.text = n; showFastToast("Renamed to $n") } }.setNegativeButton("Cancel", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() } }
 }
+--- END OF FILE: MainActivity.kt ---
+
+
+--- START OF FILE: SplashActivity.kt ---
+package com.example.xpenselator
+
+import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.View
+import androidx.appcompat.app.AppCompatActivity
+
+class SplashActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Hide the status bar for full immersion
+        window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+
+        setContentView(R.layout.activity_splash)
+
+        // Wait 2 seconds (2000ms), then open MainActivity
+        Handler(Looper.getMainLooper()).postDelayed({
+            startActivity(Intent(this, MainActivity::class.java))
+            finish() // Destroys this activity so BACK button doesn't return here
+        }, 2000)
+    }
+}
+--- END OF FILE: SplashActivity.kt ---
+
+
+--- START OF FILE: AndroidManifest.xml ---
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Xpenselator">
+
+        <activity
+            android:name=".SplashActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AppCompat.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"/>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/provider_paths" />
+        </provider>
+
+    </application>
+</manifest>
+--- END OF FILE: AndroidManifest.xml ---
+
+
+--- START OF FILE: activity_main.xml ---
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootView"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <LinearLayout
+        android:id="@+id/mainLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:weightSum="10">
+
+        <RelativeLayout
+            android:id="@+id/headerBox"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1.2"
+            android:background="#1E1E1E">
+
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_settings"
+                android:background="@android:color/transparent"
+                android:scaleType="fitCenter"
+                android:padding="5dp"
+                android:layout_alignParentStart="true"
+                android:layout_alignParentTop="true"
+                android:layout_marginTop="12dp"
+                android:layout_marginStart="12dp"
+                android:contentDescription="Settings" />
+
+            <ImageButton
+                android:id="@+id/btnHistory"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_menu_recent_history"
+                android:background="@android:color/transparent"
+                android:scaleType="fitCenter"
+                android:padding="5dp"
+                android:layout_toEndOf="@id/btnSettings"
+                android:layout_alignTop="@id/btnSettings"
+                android:layout_marginStart="15dp"
+                app:tint="#888888"
+                android:contentDescription="History" />
+
+            <TextView
+                android:id="@+id/projectName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SHEET 1"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:layout_alignTop="@id/btnSettings"
+                android:layout_alignParentEnd="true"
+                android:layout_marginEnd="15dp"
+                android:layout_marginTop="8dp"/>
+
+            <TextView
+                android:id="@+id/grandTotalText"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:text="₹0"
+                android:gravity="end|center_vertical"
+                android:textColor="#00FF00"
+                android:textSize="50sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:paddingEnd="20dp"
+                android:paddingTop="15dp"
+                android:maxLines="1"
+                app:autoSizeTextType="uniform"
+                app:autoSizeMinTextSize="20sp"
+                app:autoSizeMaxTextSize="50sp"
+                app:autoSizeStepGranularity="2sp"/>
+        </RelativeLayout>
+
+        <TextView
+            android:id="@+id/inputDisplay"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="0.8"
+            android:text="0"
+            android:gravity="end|center_vertical"
+            android:textColor="#00FFFF"
+            android:textSize="35sp"
+            android:paddingEnd="20dp"
+            android:fontFamily="monospace"
+            android:background="#2C2C2C"
+            android:singleLine="true"
+            android:scrollHorizontally="true"
+            android:ellipsize="none"
+            android:layout_marginBottom="4dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:weightSum="2"
+            android:background="#151515">
+            <Button
+                android:id="@+id/tabHistory"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="🕒 HISTORY"
+                android:textColor="#00FF00"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:background="@android:color/transparent"
+                style="?android:attr/borderlessButtonStyle"/>
+            <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#333333"/>
+            <Button
+                android:id="@+id/tabSummary"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="📊 SUMMARY"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:background="@android:color/transparent"
+                style="?android:attr/borderlessButtonStyle"/>
+        </LinearLayout>
+
+        <ViewFlipper
+            android:id="@+id/viewFlipper"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="2.5"
+            android:layout_margin="10dp"
+            android:background="@drawable/rounded_bg"
+            android:clipToOutline="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical">
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/historyList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="5dp"
+                    android:scrollbars="vertical"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/summaryList"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:padding="5dp"
+                    android:background="#1500FF00"
+                    android:scrollbars="vertical"/>
+
+                <Button
+                    android:id="@+id/btnSplitGlobal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="✂️ SPLIT BILL"
+                    android:textSize="14sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:backgroundTint="#008800"
+                    android:fontFamily="monospace"/>
+            </LinearLayout>
+        </ViewFlipper>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="5.5"
+            android:orientation="horizontal"
+            android:background="@drawable/keypad_bg"
+            android:layout_margin="5dp"
+            android:padding="5dp">
+
+            <GridLayout
+                android:id="@+id/keypadArea"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="3.2"
+                android:columnCount="4"
+                android:rowCount="5"
+                android:padding="2dp">
+
+                <Button android:id="@+id/btnAC" android:text="AC" android:background="@drawable/btn_spb" app:backgroundTint="@null" android:textColor="#FF0055" style="@style/CyberKey"/>
+                <Button android:text="÷" android:id="@+id/btnDiv" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+                <Button android:text="×" android:id="@+id/btnMul" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+                <Button android:text="⌫" android:id="@+id/btnDel" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FF0055" style="@style/CyberKey"/>
+
+                <Button android:text="7" android:id="@+id/btn7" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="8" android:id="@+id/btn8" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="9" android:id="@+id/btn9" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="-" android:id="@+id/btnSub" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+
+                <Button android:text="4" android:id="@+id/btn4" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="5" android:id="@+id/btn5" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="6" android:id="@+id/btn6" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="+" android:id="@+id/btnAdd" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+
+                <Button android:text="1" android:id="@+id/btn1" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="2" android:id="@+id/btn2" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="3" android:id="@+id/btn3" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+
+                <Button
+                    android:id="@+id/btnEqual"
+                    android:text="="
+                    android:textSize="24sp"
+                    android:background="@drawable/btn_spb"
+                    app:backgroundTint="@null"
+                    android:textColor="#00FF00"
+                    android:layout_rowSpan="2"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="2"
+                    style="@style/CyberKey"/>
+
+                <Button
+                    android:id="@+id/btn0"
+                    android:text="0"
+                    android:background="@drawable/btn_spb"
+                    app:backgroundTint="@null"
+                    android:layout_columnSpan="2"
+                    android:layout_gravity="fill"
+                    style="@style/CyberKey"/>
+
+                <Button android:text="." android:id="@+id/btnDot" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+            </GridLayout>
+
+            <ScrollView
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="2dp">
+
+                    <Button android:id="@+id/catCustom" android:text="✨\nCUSTOM" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catFood" android:text="🍔\nFOOD" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catRent" android:text="🏠\nRENT" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catTravel" android:text="🚕\nTRAVEL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catFuel" android:text="⛽\nFUEL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catShop" android:text="🛍️\nSHOPPING" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catMed" android:text="💊\nHEALTH" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catGrocery" android:text="🛒\nGROCERY" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catGym" android:text="💪\nGYM" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catWifi" android:text="🛜\nWIFI" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catPower" android:text="⚡\nELECTRICITY" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catCable" android:text="📺\nCABLE TV" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catWater" android:text="💧\nWATER" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catRefresh" android:text="🍺\nDRINKS" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catSchool" android:text="🏫\nSCHOOL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catTuition" android:text="📚\nTUITION" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catHelp" android:text="👩\nMAID" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/btnShare" android:text="SHARE" android:drawableTop="@android:drawable/ic_menu_share" android:drawableTint="@android:color/white" android:padding="8dp" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFFFF" style="@style/IconBtn"/>
+                </LinearLayout>
+            </ScrollView>
+        </LinearLayout>
+    </LinearLayout>
+
+    <RelativeLayout
+        android:id="@+id/historyOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#151515"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        android:elevation="50dp">
+        <TextView android:id="@+id/historyTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="TIME MACHINE" android:textColor="#00FFFF" android:textSize="24sp" android:textStyle="bold" android:fontFamily="monospace" android:gravity="center" android:padding="20dp" android:background="#222222"/>
+        <ListView android:id="@+id/fullHistoryList" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_below="@id/historyTitle" android:layout_above="@id/btnCloseHistory" android:divider="#333333" android:dividerHeight="1dp"/>
+        <Button android:id="@+id/btnCloseHistory" android:layout_width="match_parent" android:layout_height="60dp" android:layout_alignParentBottom="true" android:text="CLOSE" android:background="@android:color/black" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold"/>
+    </RelativeLayout>
+
+    <RelativeLayout
+        android:id="@+id/chartOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#101010"
+        android:visibility="gone"
+        android:elevation="60dp"
+        android:clickable="true"
+        android:focusable="true">
+        <TextView android:id="@+id/chartTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="VISUAL ANALYTICS" android:textColor="#FFA500" android:textSize="24sp" android:textStyle="bold" android:fontFamily="monospace" android:gravity="center" android:padding="20dp" android:background="#222222"/>
+        <ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:layout_below="@id/chartTitle" android:layout_above="@id/btnCloseChart" android:layout_marginBottom="10dp" android:fillViewport="true">
+            <LinearLayout android:id="@+id/chartContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+        </ScrollView>
+        <Button android:id="@+id/btnCloseChart" android:layout_width="match_parent" android:layout_height="60dp" android:layout_alignParentBottom="true" android:text="CLOSE ANALYTICS" android:background="@android:color/black" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold"/>
+    </RelativeLayout>
+
+    <RelativeLayout
+        android:id="@+id/sheetOverlayContainer"
+        android:layout_width="320dp"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:background="@drawable/glass_panel"
+        android:visibility="gone"
+        android:elevation="30dp"
+        android:padding="10dp">
+        <View android:layout_width="match_parent" android:layout_height="40dp" android:layout_centerInParent="true" android:background="@drawable/sheet_highlight" />
+        <TextView android:id="@+id/sheetOverlayText" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_centerInParent="true" android:text="SHEET 1\nSHEET 2\nSHEET 3" android:textSize="22sp" android:textColor="#FFFFFF" android:textStyle="bold" android:fontFamily="monospace" android:gravity="center" android:lineSpacingExtra="12dp"/>
+    </RelativeLayout>
+
+</RelativeLayout>
+--- END OF FILE: activity_main.xml ---
+
+
+--- START OF FILE: activity_splash.xml ---
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000B29">
+
+    <ImageView
+        android:id="@+id/imgLogo"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:layout_centerInParent="true"
+        android:src="@drawable/xpenselator_logo"
+        android:contentDescription="App Logo" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Powered by ByteMantis"
+        android:textColor="#00FF00"
+        android:fontFamily="monospace"
+        android:textSize="14sp"
+        android:layout_alignParentBottom="true"
+        android:layout_centerHorizontal="true"
+        android:layout_marginBottom="40dp" />
+
+</RelativeLayout>
+--- END OF FILE: activity_splash.xml ---
+
+
+--- START OF FILE: dialog_settings.xml ---
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/glass_panel"
+    android:padding="25dp"
+    android:layout_gravity="center">
+
+    <TextView
+        android:text="SYSTEM SETTINGS"
+        android:textSize="20sp"
+        android:textColor="#00FF00"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:gravity="center"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="25dp"/>
+
+    <Switch
+        android:id="@+id/swSound"
+        android:text="Sound Effects"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="15dp"/>
+
+    <Switch
+        android:id="@+id/swVib"
+        android:text="Haptic Vibrate"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="15dp"/>
+
+    <Switch
+        android:id="@+id/swTheme"
+        android:text="Dark Mode"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="25dp"/>
+
+    <Button
+        android:id="@+id/btnCloseSettings"
+        android:text="DONE"
+        android:textColor="#000000"
+        android:backgroundTint="#00FF00"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+</LinearLayout>
+--- END OF FILE: dialog_settings.xml ---
+
+
+--- START OF FILE: item_compact.xml ---
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/itemName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="Item Name"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:gravity="center_vertical|start" />
+
+    <TextView
+        android:id="@+id/itemPrice"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="₹0.00"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:gravity="end|center_vertical"
+        android:paddingStart="10dp"
+        android:maxLines="1" />
+
+</LinearLayout>
+--- END OF FILE: item_compact.xml ---
+
+
+--- START OF FILE: item_summary_glossy.xml ---
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="2dp">
+
+    <com.example.xpenselator.GlossyBarView
+        android:id="@+id/glossyBar"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"/>
+
+</LinearLayout>
+--- END OF FILE: item_summary_glossy.xml ---
+
+
+--- START OF FILE: list_item.xml ---
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/text1"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:textColor="#FFFFFF"
+    android:textSize="16sp"
+    android:padding="8dp"
+    android:fontFamily="monospace"
+    android:gravity="center_vertical" />
+--- END OF FILE: list_item.xml ---
+
+
+--- START OF FILE: build.gradle (App Level) ---
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    // KSP Plugin for Room
+    id("com.google.devtools.ksp") version "1.9.24-1.0.20"
+}
+
+android {
+    namespace = "com.example.xpenselator"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.byteskull.xpenselator"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 2
+        versionName = "1.1"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+}
+
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.androidx.activity)
+    implementation(libs.androidx.constraintlayout)
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+
+    // --- ROOM DATABASE TOOLS ---
+    val room_version = "2.6.1"
+    implementation("androidx.room:room-runtime:$room_version")
+    implementation("androidx.room:room-ktx:$room_version")
+
+    // KSP Compiler (Replaces KAPT)
+    ksp("androidx.room:room-compiler:$room_version")
+}
+--- END OF FILE: build.gradle (App Level) ---
+
