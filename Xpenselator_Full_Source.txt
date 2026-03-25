@@ -1,0 +1,3071 @@
+--- XPENSELATOR FULL EXPORT ---
+
+
+################################################
+FILE: AppDatabase.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\AppDatabase.kt
+################################################
+
+package com.example.xpenselator
+
+import androidx.room.Database
+import androidx.room.RoomDatabase
+
+// Bumped to Version 3 for the new 'assignedTo' column
+@Database(entities = [ExpenseEntity::class], version = 3, exportSchema = false)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun expenseDao(): ExpenseDao
+}
+
+################################################
+FILE: ExpenseDao.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\ExpenseDao.kt
+################################################
+
+package com.example.xpenselator
+
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.Query
+
+@Dao
+interface ExpenseDao {
+    @Query("SELECT * FROM expenses WHERE sheetId = :sheetId")
+    fun getExpensesForSheet(sheetId: Int): List<ExpenseEntity>
+
+    @Insert
+    fun insert(expense: ExpenseEntity)
+
+    @Delete
+    fun delete(expense: ExpenseEntity)
+
+    @Query("DELETE FROM expenses WHERE sheetId = :sheetId")
+    fun clearSheet(sheetId: Int)
+
+    // Advanced Owner Logic: Deletes items where description contains the category name
+    @Query("DELETE FROM expenses WHERE sheetId = :sheetId AND description LIKE '%' || :category || '%'")
+    fun deleteCategory(sheetId: Int, category: String)
+}
+
+################################################
+FILE: ExpenseEntity.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\ExpenseEntity.kt
+################################################
+
+package com.example.xpenselator
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "expenses")
+data class ExpenseEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val sheetId: Int,
+    val description: String,
+    val amount: String,
+    val assignedTo: String = "" // NEW: True Line-Item Tagging
+)
+
+################################################
+FILE: ExpenseRepository.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\ExpenseRepository.kt
+################################################
+
+package com.example.xpenselator
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.provider.Settings
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlin.math.abs
+
+class ExpenseRepository(
+    private val context: Context,
+    private val expenseDao: ExpenseDao,
+    private val db: FirebaseFirestore
+) {
+    private val prefs: SharedPreferences = context.getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+
+    fun getExpensesForSheet(sheetId: Int): List<ExpenseEntity> {
+        return expenseDao.getExpensesForSheet(sheetId)
+    }
+
+    fun addExpense(expense: ExpenseEntity) {
+        expenseDao.insert(expense)
+    }
+
+    fun deleteExpense(expense: ExpenseEntity) {
+        expenseDao.delete(expense)
+    }
+
+    fun clearSheet(sheetId: Int) {
+        expenseDao.clearSheet(sheetId)
+    }
+
+    fun deleteCategory(sheetId: Int, categoryName: String) {
+        expenseDao.deleteCategory(sheetId, categoryName)
+    }
+
+    fun getGroupMembers(sheetId: Int): List<String> {
+        val str = prefs.getString("GROUP_$sheetId", "") ?: ""
+        return if (str.isEmpty()) emptyList() else str.split(",")
+    }
+
+    fun saveGroupMembers(sheetId: Int, members: List<String>) {
+        prefs.edit().putString("GROUP_$sheetId", members.joinToString(",")).apply()
+    }
+
+    // --- NEW: GLOBAL SPLIT PERCENTAGE CONFIG ---
+    fun getGlobalSplitPercentages(sheetId: Int): String {
+        return prefs.getString("SPLIT_PERC_$sheetId", "") ?: ""
+    }
+
+    fun saveGlobalSplitConfig(sheetId: Int, percentages: String) {
+        prefs.edit().putString("SPLIT_PERC_$sheetId", percentages).apply()
+    }
+
+    // --- GLOBAL SETTINGS ---
+    fun isDarkMode(): Boolean = prefs.getBoolean("DARK_MODE", true)
+
+    fun setDarkMode(enabled: Boolean) {
+        prefs.edit().putBoolean("DARK_MODE", enabled).apply()
+    }
+
+    fun isProVersion(): Boolean = prefs.getBoolean("IS_PRO", false)
+
+    fun setProVersion(enabled: Boolean) {
+        prefs.edit().putBoolean("IS_PRO", enabled).apply()
+    }
+
+    fun isSheetLocked(sheetId: Int): Boolean = prefs.getBoolean("LOCKED_$sheetId", false)
+
+    fun setSheetLocked(sheetId: Int, locked: Boolean) {
+        prefs.edit().putBoolean("LOCKED_$sheetId", locked).apply()
+    }
+
+    fun getHardwareID(): Int {
+        return try {
+            val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "random"
+            val hash = abs(androidId.hashCode())
+            (hash % 9000) + 1000
+        } catch (e: Exception) {
+            9999
+        }
+    }
+
+    fun syncProStatus(deviceId: Int, onResult: (Boolean) -> Unit) {
+        db.collection("PremiumUsers").document(deviceId.toString())
+            .get()
+            .addOnSuccessListener { document ->
+                val serverIsPro = document != null && document.getBoolean("isPro") == true
+                if (isProVersion() != serverIsPro) {
+                    setProVersion(serverIsPro)
+                }
+                onResult(serverIsPro)
+            }
+            .addOnFailureListener {
+                onResult(isProVersion())
+            }
+    }
+}
+
+################################################
+FILE: ExpenseViewModel.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\ExpenseViewModel.kt
+################################################
+
+package com.example.xpenselator
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import java.math.BigDecimal
+import java.math.RoundingMode
+
+class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() {
+
+    private val _totalAmount = MutableStateFlow("₹0.00")
+    val totalAmount: StateFlow<String> = _totalAmount
+
+    private val _expenses = MutableStateFlow<List<ExpenseEntity>>(emptyList())
+    val expenses: StateFlow<List<ExpenseEntity>> = _expenses
+
+    private val _summaryItems = MutableStateFlow<List<String>>(emptyList())
+    val summaryItems: StateFlow<List<String>> = _summaryItems
+
+    private val _activeMembers = MutableStateFlow<List<String>>(emptyList())
+    val activeMembers: StateFlow<List<String>> = _activeMembers
+
+    var rawGrandTotal = BigDecimal.ZERO
+
+    fun loadSheet(sheetId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = repository.getExpensesForSheet(sheetId)
+            _expenses.value = list
+
+            var total = BigDecimal.ZERO
+            val catTotals = HashMap<String, BigDecimal>()
+            val memberTotals = HashMap<String, BigDecimal>()
+            val splits = ArrayList<String>()
+
+            for (item in list) {
+                val amt = item.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                if (!item.description.startsWith("↳")) {
+                    total = total.add(amt)
+                    val catName = item.description.filter { it.isLetter() }.trim()
+                    if (catName.isNotEmpty()) {
+                        catTotals[catName] = catTotals.getOrDefault(catName, BigDecimal.ZERO).add(amt)
+                    }
+                    if (item.assignedTo.isNotEmpty()) {
+                        memberTotals[item.assignedTo] = memberTotals.getOrDefault(item.assignedTo, BigDecimal.ZERO).add(amt)
+                    }
+                } else {
+                    splits.add("${item.description}: ₹${item.amount}")
+                }
+            }
+
+            rawGrandTotal = total
+            _totalAmount.value = "₹" + total.setScale(2, RoundingMode.HALF_UP).toPlainString()
+
+            _activeMembers.value = repository.getGroupMembers(sheetId)
+
+            val newSummary = ArrayList<String>()
+            for ((name, t) in catTotals) {
+                newSummary.add("$name: ₹${t.setScale(2, RoundingMode.HALF_UP).toPlainString()}")
+            }
+
+            if (memberTotals.isNotEmpty()) {
+                newSummary.add("--- MEMBER TOTALS ---")
+                for ((name, t) in memberTotals) {
+                    newSummary.add("$name: ₹${t.setScale(2, RoundingMode.HALF_UP).toPlainString()}")
+                }
+            }
+
+            if (splits.isNotEmpty()) {
+                newSummary.add("--- BILL SPLIT ---")
+                newSummary.addAll(splits)
+            }
+            _summaryItems.value = newSummary
+        }
+    }
+
+    fun saveGroupMembers(sheetId: Int, members: List<String>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.saveGroupMembers(sheetId, members)
+            if (members.isEmpty()) {
+                repository.clearSheet(sheetId)
+            }
+            loadSheet(sheetId)
+        }
+    }
+
+    fun addExpense(sheetId: Int, description: String, amount: BigDecimal, assignedTo: String = "") {
+        viewModelScope.launch(Dispatchers.IO) {
+            val entity = ExpenseEntity(
+                sheetId = sheetId,
+                description = description,
+                amount = amount.setScale(2, RoundingMode.HALF_UP).toPlainString(),
+                assignedTo = assignedTo
+            )
+            repository.addExpense(entity)
+            autoUpdateGlobalSplits(sheetId)
+            loadSheet(sheetId)
+        }
+    }
+
+    fun deleteExpense(expense: ExpenseEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteExpense(expense)
+            autoUpdateGlobalSplits(expense.sheetId)
+            loadSheet(expense.sheetId)
+        }
+    }
+
+    fun clearSheet(sheetId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.clearSheet(sheetId)
+            repository.saveGroupMembers(sheetId, emptyList())
+            loadSheet(sheetId)
+        }
+    }
+
+    fun deleteCategory(sheetId: Int, categoryName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteCategory(sheetId, categoryName)
+            autoUpdateGlobalSplits(sheetId)
+            loadSheet(sheetId)
+        }
+    }
+
+    fun removeAllSplits(sheetId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val currentList = repository.getExpensesForSheet(sheetId)
+            for (item in currentList) {
+                if (item.description.startsWith("↳")) {
+                    repository.deleteExpense(item)
+                }
+            }
+            loadSheet(sheetId)
+        }
+    }
+
+    // --- NEW: PERCENTAGE-BASED SAVING ---
+    fun saveGlobalSplit(sheetId: Int, percentages: Map<String, BigDecimal>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val percString = percentages.map { "${it.key}=${it.value.toPlainString()}" }.joinToString(",")
+            repository.saveGlobalSplitConfig(sheetId, percString)
+
+            val currentList = repository.getExpensesForSheet(sheetId)
+            for (item in currentList) {
+                if (item.description.startsWith("↳")) {
+                    repository.deleteExpense(item)
+                }
+            }
+
+            for ((name, _) in percentages) {
+                // Insert placeholders to register names; the auto engine will calculate real values instantly
+                repository.addExpense(ExpenseEntity(sheetId = sheetId, description = "↳ [BILL SPLIT] $name", amount = "0.00"))
+            }
+
+            autoUpdateGlobalSplits(sheetId)
+            loadSheet(sheetId)
+        }
+    }
+
+    // --- UPDATED: DYNAMIC PERCENTAGE ENGINE ---
+    private fun autoUpdateGlobalSplits(sheetId: Int) {
+        val currentList = repository.getExpensesForSheet(sheetId)
+        var total = BigDecimal.ZERO
+        val splitMembers = ArrayList<String>()
+
+        for (item in currentList) {
+            if (item.description.startsWith("↳")) {
+                val memberName = item.description.replace("↳ [BILL SPLIT]", "").trim()
+                if (memberName.isNotEmpty() && !splitMembers.contains(memberName)) splitMembers.add(memberName)
+                repository.deleteExpense(item)
+            } else {
+                val amt = item.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                total = total.add(amt)
+            }
+        }
+
+        if (splitMembers.isNotEmpty()) {
+            val percString = repository.getGlobalSplitPercentages(sheetId)
+            val percMap = HashMap<String, BigDecimal>()
+
+            if (percString.isNotEmpty()) {
+                val pairs = percString.split(",")
+                for (p in pairs) {
+                    val kv = p.split("=")
+                    if (kv.size == 2) percMap[kv[0]] = BigDecimal(kv[1])
+                }
+            }
+
+            var allocatedTotal = BigDecimal.ZERO
+
+            for (i in 0 until splitMembers.size) {
+                val name = splitMembers[i]
+                val share: BigDecimal
+
+                if (i == splitMembers.size - 1) {
+                    // The last person gets the precise remainder to prevent 0.01 fractional errors
+                    share = total.subtract(allocatedTotal)
+                } else {
+                    val p = percMap[name] ?: BigDecimal.ZERO
+                    share = total.multiply(p).divide(BigDecimal("100"), 2, RoundingMode.FLOOR)
+                    allocatedTotal = allocatedTotal.add(share)
+                }
+
+                val splitEntity = ExpenseEntity(
+                    sheetId = sheetId,
+                    description = "↳ [BILL SPLIT] $name",
+                    amount = share.toPlainString()
+                )
+                repository.addExpense(splitEntity)
+            }
+        }
+    }
+}
+
+class ExpenseViewModelFactory(private val repository: ExpenseRepository) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(ExpenseViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return ExpenseViewModel(repository) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+
+################################################
+FILE: GlossyBarView.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\GlossyBarView.kt
+################################################
+
+package com.example.xpenselator
+
+import android.animation.ValueAnimator
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.util.AttributeSet
+import android.view.View
+import android.view.animation.DecelerateInterpolator
+
+// FIX: Added @JvmOverloads and 'attrs' so XML layout inflation works without crashing
+class GlossyBarView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
+
+    private var progress: Float = 0f // 0.0 to 1.0
+    private var targetProgress: Float = 0f
+    private var barColor: Int = Color.GRAY
+    private var labelText: String = ""
+    private var valueText: String = ""
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+
+    init {
+        textPaint.color = Color.WHITE
+        textPaint.textSize = 30f // Adjust size as needed
+        textPaint.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        textPaint.setShadowLayer(5f, 2f, 2f, Color.BLACK) // Text Shadow for readability
+    }
+
+    fun setup(name: String, value: String, percentage: Float, color: Int) {
+        this.labelText = name
+        this.valueText = value
+        this.targetProgress = percentage
+        this.barColor = color
+        invalidate()
+    }
+
+    // Call this to trigger the "Smooth and Fast" animation
+    fun animateBar() {
+        val animator = ValueAnimator.ofFloat(0f, targetProgress)
+        animator.duration = 600 // Fast but smooth (600ms)
+        animator.interpolator = DecelerateInterpolator() // Starts fast, slows at end
+        animator.addUpdateListener {
+            progress = it.animatedValue as Float
+            invalidate()
+        }
+        animator.start()
+    }
+
+    // For non-animated lists (Summary tab)
+    fun setStatic() {
+        progress = targetProgress
+        invalidate()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        // Fixed height for the bar rows
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), 100)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val w = width.toFloat()
+        val h = height.toFloat()
+
+        // Calculate Bar Width
+        val barWidth = w * progress
+
+        // Safety: Even if progress is 0, draw a tiny line so it looks valid
+        val drawWidth = if (barWidth < 20f) 20f else barWidth
+
+        rect.set(10f, 15f, drawWidth, h - 15f)
+
+        // Use the Shared Renderer
+        GlossyRender.drawGlossyBar(canvas, rect, barColor, paint)
+
+        // Draw Text ON TOP of the bar
+        val text = "$labelText: $valueText"
+        // Draw text slightly indented
+        canvas.drawText(text, 30f, (h / 2f) + 10f, textPaint)
+    }
+}
+
+################################################
+FILE: GlossyRender.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\GlossyRender.kt
+################################################
+
+package com.example.xpenselator
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Shader
+
+object GlossyRender {
+
+    // Shared "Glass Tube" drawing logic
+    fun drawGlossyBar(
+        canvas: Canvas,
+        rect: RectF,
+        baseColor: Int,
+        paint: Paint,
+        isPdf: Boolean = false // NEW: Added PDF-awareness flag
+    ) {
+        val radius = rect.height() / 4f
+
+        if (isPdf) {
+            // PDF-Safe drawing: Strip shaders and use solid base color
+            paint.shader = null
+            paint.color = baseColor
+            canvas.drawRoundRect(rect, radius, radius, paint)
+        } else {
+            // 1. Draw Base Cylinder (Darker at bottom for roundness)
+            paint.shader = LinearGradient(
+                rect.left, rect.top, rect.left, rect.bottom,
+                intArrayOf(baseColor, darken(baseColor, 0.7f)),
+                null, Shader.TileMode.CLAMP
+            )
+            canvas.drawRoundRect(rect, radius, radius, paint)
+
+            // 2. Draw "Glass Highlight" (The white shine on top)
+            // We shrink the rect slightly so the shine sits inside
+            val shineRect = RectF(rect.left, rect.top, rect.right, rect.centerY())
+
+            paint.shader = LinearGradient(
+                shineRect.left, shineRect.top, shineRect.left, shineRect.bottom,
+                intArrayOf(Color.argb(100, 255, 255, 255), Color.TRANSPARENT),
+                null, Shader.TileMode.CLAMP
+            )
+            canvas.drawRoundRect(shineRect, radius, radius, paint)
+
+            // Reset Paint
+            paint.shader = null
+        }
+    }
+
+    private fun darken(color: Int, factor: Float): Int {
+        val a = Color.alpha(color)
+        val r = (Color.red(color) * factor).toInt()
+        val g = (Color.green(color) * factor).toInt()
+        val b = (Color.blue(color) * factor).toInt()
+        return Color.argb(a, r, g, b)
+    }
+}
+
+################################################
+FILE: MainActivity.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\MainActivity.kt
+################################################
+
+package com.example.xpenselator
+
+import com.google.firebase.firestore.FirebaseFirestore
+import android.content.Context
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.pdf.PdfDocument
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.provider.Settings
+import android.text.InputType
+import android.text.SpannableString
+import android.text.style.RelativeSizeSpan
+import android.view.GestureDetector
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
+import android.widget.*
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.content.FileProvider
+import androidx.core.view.GestureDetectorCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.text.DecimalFormat
+import kotlin.math.abs
+import kotlin.math.min
+import kotlin.math.max
+
+class MainActivity : AppCompatActivity() {
+
+    private var isProVersion = false
+    private val PRO_PRICE = "₹99"
+    private val FREE_SHEET_LIMIT = 3
+    private val PAYMENT_LINK = "https://t.me/Xpenselator_Bot"
+
+    private var isNewEntry = true
+    private var isDisplayingResult = false
+    private var isSheetLocked = false
+
+    private val MAX_INPUT_DIGITS = 9
+    private val MAX_TOTAL_LIMIT = BigDecimal("1000000000000")
+    private val SPLIT_PREFIX = "↳"
+    private val SPLIT_HEADER_TEXT = "--- BILL SPLIT ---"
+
+    private var currentSheetID = 1
+    private var maxSheetID = 1
+    private var deviceRequestID = 0
+    private var currentToast: Toast? = null
+
+    private lateinit var gestureDetector: GestureDetectorCompat
+    private var touchStartY = 0f
+    private var isSheetMode = false
+    private var tempSheetID = 1
+    private val handler = Handler(Looper.getMainLooper())
+    private var longPressRunnable: Runnable? = null
+    private var chartRunnable: Runnable? = null
+
+    private var isSoundOn = true
+    private var isVibrationOn = true
+    private var isDarkMode = true
+
+    private lateinit var db: FirebaseFirestore
+    private lateinit var repository: ExpenseRepository
+    private lateinit var viewModel: ExpenseViewModel
+
+    private lateinit var rootView: RelativeLayout
+    private lateinit var mainLayout: LinearLayout
+    private lateinit var headerBox: RelativeLayout
+    private lateinit var btnSettings: ImageButton
+    private lateinit var btnHistory: ImageButton
+    private lateinit var topd: TextView
+    private lateinit var secd: TextView
+
+    private lateinit var keypadArea: GridLayout
+    private lateinit var catLayout: LinearLayout
+    private lateinit var keypadContainer: LinearLayout
+
+    private lateinit var viewFlipper: ViewFlipper
+    private lateinit var tabHistory: Button
+    private lateinit var tabSummary: Button
+    private lateinit var hisd: RecyclerView
+    private lateinit var summaryRecycler: RecyclerView
+    private lateinit var btnSplitGlobal: Button
+    private var btnHistorySplit: Button? = null
+
+    private lateinit var projectName: TextView
+    private lateinit var overlayContainer: RelativeLayout
+    private lateinit var overlayText: TextView
+    private lateinit var historyOverlay: RelativeLayout
+    private lateinit var fullHistoryList: ListView
+    private lateinit var btnCloseHistory: Button
+    private lateinit var chartOverlay: RelativeLayout
+    private lateinit var chartContainer: LinearLayout
+    private lateinit var btnCloseChart: Button
+
+    private lateinit var expenseAdapter: ExpenseAdapter
+    private lateinit var summaryAdapter: SummaryAdapter
+    private lateinit var fullHistoryAdapter: ArrayAdapter<String>
+
+    private val toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+    private lateinit var vibrator: Vibrator
+
+    private val catColors = mapOf(
+        "Food" to Color.parseColor("#FF0000"), "Rent" to Color.parseColor("#FF7F00"),
+        "Travel" to Color.parseColor("#FFFF00"), "Fuel" to Color.parseColor("#00FF00"),
+        "Shopping" to Color.parseColor("#00FFFF"), "Health" to Color.parseColor("#0000FF"),
+        "Grocery" to Color.parseColor("#8B00FF"), "Gym" to Color.parseColor("#FF00FF"),
+        "Wifi" to Color.parseColor("#C0C0C0"), "Electricity" to Color.parseColor("#FF4500"),
+        "Cable" to Color.parseColor("#9400D3"), "Water" to Color.parseColor("#1E90FF"),
+        "Drinks" to Color.parseColor("#8B4513"), "School" to Color.parseColor("#32CD32"),
+        "Tuition" to Color.parseColor("#FFD700"), "Maid" to Color.parseColor("#00CED1"),
+        "Custom" to Color.LTGRAY
+    )
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+        setContentView(R.layout.activity_main)
+
+        vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        db = FirebaseFirestore.getInstance()
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE expenses ADD COLUMN assignedTo TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        val database = androidx.room.Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java,
+            "xpenselator-db"
+        ).addMigrations(MIGRATION_2_3).build()
+
+        repository = ExpenseRepository(this, database.expenseDao(), db)
+        viewModel = ViewModelProvider(this, ExpenseViewModelFactory(repository))[ExpenseViewModel::class.java]
+
+        deviceRequestID = repository.getHardwareID()
+
+        rootView = findViewById(R.id.rootView)
+        mainLayout = findViewById(R.id.mainLayout)
+        headerBox = findViewById(R.id.headerBox)
+        btnSettings = findViewById(R.id.btnSettings)
+        btnHistory = findViewById(R.id.btnHistory)
+        topd = findViewById(R.id.grandTotalText)
+        secd = findViewById(R.id.inputDisplay)
+        keypadArea = findViewById(R.id.keypadArea)
+
+        val kArea = findViewById<View>(R.id.keypadArea)
+        keypadContainer = kArea.parent as LinearLayout
+        val cCustom = findViewById<View>(R.id.catCustom)
+        catLayout = cCustom.parent as LinearLayout
+
+        viewFlipper = findViewById(R.id.viewFlipper)
+        viewFlipper.setInAnimation(this, android.R.anim.fade_in)
+        viewFlipper.setOutAnimation(this, android.R.anim.fade_out)
+
+        tabHistory = findViewById(R.id.tabHistory)
+        tabSummary = findViewById(R.id.tabSummary)
+        btnSplitGlobal = findViewById(R.id.btnSplitGlobal)
+
+        tabHistory.setOnClickListener {
+            performHaptic()
+            if (viewFlipper.displayedChild != 0) {
+                viewFlipper.displayedChild = 0
+                updateTabVisuals(0)
+            }
+        }
+
+        tabSummary.setOnClickListener {
+            performHaptic()
+            if (viewFlipper.displayedChild != 1) {
+                viewFlipper.displayedChild = 1
+                updateTabVisuals(1)
+            }
+        }
+
+        btnSplitGlobal.setOnClickListener {
+            performHaptic()
+            handleSplitButtonClick()
+        }
+
+        hisd = findViewById(R.id.historyList)
+        hisd.layoutManager = LinearLayoutManager(this)
+        expenseAdapter = ExpenseAdapter(emptyList())
+        hisd.adapter = expenseAdapter
+
+        val hisdParent = hisd.parent as ViewGroup
+        val hisdIndex = hisdParent.indexOfChild(hisd)
+        hisdParent.removeView(hisd)
+
+        val historyWrapper = LinearLayout(this)
+        historyWrapper.orientation = LinearLayout.VERTICAL
+        historyWrapper.layoutParams = hisd.layoutParams
+
+        val recyclerParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        hisd.layoutParams = recyclerParams
+
+        btnHistorySplit = Button(this)
+        btnHistorySplit!!.text = "👥 SETUP GROUP"
+        btnHistorySplit!!.setTextColor(Color.WHITE)
+        val gd = GradientDrawable()
+        gd.shape = GradientDrawable.RECTANGLE
+        gd.cornerRadius = 100f
+        gd.setColor(Color.parseColor("#008800"))
+        btnHistorySplit!!.background = gd
+
+        val btnParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        btnParams.setMargins(0, 20, 0, 0)
+        btnHistorySplit!!.layoutParams = btnParams
+
+        btnHistorySplit!!.setOnClickListener {
+            performHaptic()
+            if (!isSheetLocked) {
+                showSetupGroupDialog()
+            }
+        }
+
+        historyWrapper.addView(hisd)
+        historyWrapper.addView(btnHistorySplit)
+        hisdParent.addView(historyWrapper, hisdIndex)
+
+        summaryRecycler = findViewById(R.id.summaryList)
+        summaryRecycler.layoutManager = LinearLayoutManager(this)
+        summaryAdapter = SummaryAdapter(emptyList())
+        summaryRecycler.adapter = summaryAdapter
+
+        projectName = findViewById(R.id.projectName)
+        overlayContainer = findViewById(R.id.sheetOverlayContainer)
+        overlayText = findViewById(R.id.sheetOverlayText)
+        historyOverlay = findViewById(R.id.historyOverlay)
+        fullHistoryList = findViewById(R.id.fullHistoryList)
+        btnCloseHistory = findViewById(R.id.btnCloseHistory)
+        chartOverlay = findViewById(R.id.chartOverlay)
+        chartContainer = findViewById(R.id.chartContainer)
+        btnCloseChart = findViewById(R.id.btnCloseChart)
+
+        fullHistoryAdapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, ArrayList()) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent) as TextView
+                view.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+                view.setPadding(20, view.paddingTop, view.paddingRight, view.paddingBottom)
+                return view
+            }
+        }
+        fullHistoryList.adapter = fullHistoryAdapter
+
+        loadGlobalSettings()
+        applyThemeManual()
+        switchSheet(currentSheetID)
+        updateTabVisuals(0)
+        syncProStatusWithServer()
+
+        lifecycleScope.launchWhenStarted {
+            viewModel.totalAmount.collect { newTotal ->
+                topd.text = newTotal
+            }
+        }
+
+        lifecycleScope.launchWhenStarted {
+            viewModel.expenses.collect { list ->
+                val historyOnly = list.filter { !it.description.startsWith(SPLIT_PREFIX) }
+                expenseAdapter.updateData(historyOnly)
+
+                fullHistoryAdapter.clear()
+                fullHistoryAdapter.addAll(historyOnly.map {
+                    val tag = if(it.assignedTo.isNotEmpty()) " - ${it.assignedTo}" else ""
+                    "${it.description}$tag: ₹${it.amount}"
+                })
+                fullHistoryAdapter.notifyDataSetChanged()
+
+                if (historyOnly.isNotEmpty()) hisd.smoothScrollToPosition(historyOnly.size - 1)
+            }
+        }
+
+        lifecycleScope.launchWhenStarted {
+            viewModel.summaryItems.collect { list ->
+                summaryAdapter.updateData(list)
+            }
+        }
+
+        lifecycleScope.launchWhenStarted {
+            viewModel.activeMembers.collect {
+                updateSplitButtonState()
+            }
+        }
+
+        gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                if (e1 == null) return false
+                val diffY = e2.y - e1.y
+                if (Math.abs(diffY) > 50 && Math.abs(velocityY) > 50) {
+                    if (diffY < 0) goToNextSheet() else goToPrevSheet()
+                    return true
+                }
+                return false
+            }
+        })
+
+        btnSettings.setOnClickListener { showSettingsDialog() }
+        projectName.setOnClickListener { showRenameDialog() }
+        projectName.setOnLongClickListener { deleteCurrentSheet(); true }
+        btnHistory.setOnClickListener { performHaptic(); historyOverlay.visibility = View.VISIBLE }
+        btnCloseHistory.setOnClickListener { performHaptic(); historyOverlay.visibility = View.GONE }
+        btnCloseChart.setOnClickListener { performHaptic(); chartOverlay.visibility = View.GONE }
+
+        setupCalculatorButtons()
+        setupCategoryButtons()
+        setupEqualButtonTouch()
+        setupZeroButtonTouch()
+        setupACButtonTouch()
+    }
+
+    private fun handleSplitButtonClick() {
+        if (isSheetLocked) {
+            isSheetLocked = false
+            repository.setSheetLocked(currentSheetID, false)
+            viewModel.removeAllSplits(currentSheetID)
+            updateSplitButtonState()
+            showFastToast("🔓 SPLIT REMOVED")
+        } else {
+            showGlobalSplitDialog()
+        }
+    }
+
+    private fun updateTabVisuals(selected: Int) {
+        if (selected == 0) {
+            tabHistory.setTextColor(Color.GREEN)
+            tabHistory.setBackgroundColor(Color.parseColor("#3300FF00"))
+            tabSummary.setTextColor(Color.GRAY)
+            tabSummary.setBackgroundColor(Color.TRANSPARENT)
+        } else {
+            tabHistory.setTextColor(Color.GRAY)
+            tabHistory.setBackgroundColor(Color.TRANSPARENT)
+            tabSummary.setTextColor(Color.CYAN)
+            tabSummary.setBackgroundColor(Color.parseColor("#3300FFFF"))
+        }
+    }
+
+    private fun updateSplitButtonState() {
+        val hasGroup = viewModel.activeMembers.value.isNotEmpty()
+
+        if (hasGroup) {
+            btnSplitGlobal.text = "🔒 GROUP ACTIVE"
+            btnSplitGlobal.background.setTint(Color.DKGRAY)
+            btnSplitGlobal.isEnabled = false
+        } else if (isSheetLocked) {
+            btnSplitGlobal.text = "🔓 UNLOCK"
+            btnSplitGlobal.background.setTint(Color.RED)
+            btnSplitGlobal.isEnabled = true
+        } else {
+            btnSplitGlobal.text = "✂️ SPLIT BILL"
+            btnSplitGlobal.background.setTint(Color.parseColor("#008800"))
+            btnSplitGlobal.isEnabled = true
+        }
+
+        if (isSheetLocked) {
+            btnHistorySplit?.text = "🔒 SPLIT ACTIVE"
+            val gd = GradientDrawable()
+            gd.shape = GradientDrawable.RECTANGLE; gd.cornerRadius = 100f; gd.setColor(Color.DKGRAY)
+            btnHistorySplit?.background = gd
+            btnHistorySplit?.isEnabled = false
+        } else if (hasGroup) {
+            btnHistorySplit?.text = "👥 EDIT GROUP"
+            val gd = GradientDrawable()
+            gd.shape = GradientDrawable.RECTANGLE; gd.cornerRadius = 100f; gd.setColor(Color.parseColor("#008800"))
+            btnHistorySplit?.background = gd
+            btnHistorySplit?.isEnabled = true
+        } else {
+            btnHistorySplit?.text = "👥 SETUP GROUP"
+            val gd = GradientDrawable()
+            gd.shape = GradientDrawable.RECTANGLE; gd.cornerRadius = 100f; gd.setColor(Color.parseColor("#008800"))
+            btnHistorySplit?.background = gd
+            btnHistorySplit?.isEnabled = true
+        }
+
+        secd.hint = ""
+    }
+
+    private fun applyThemeManual() {
+        if (isDarkMode) {
+            window.statusBarColor = Color.BLACK
+            rootView.setBackgroundColor(Color.BLACK)
+            headerBox.setBackgroundColor(Color.parseColor("#1E1E1E"))
+            topd.setTextColor(Color.GREEN)
+            btnSettings.setColorFilter(Color.WHITE)
+            btnHistory.setColorFilter(Color.LTGRAY)
+            keypadContainer.background.setTint(Color.parseColor("#050505"))
+            historyOverlay.setBackgroundColor(Color.parseColor("#151515"))
+            secd.setBackgroundColor(Color.parseColor("#2C2C2C"))
+            secd.setTextColor(Color.CYAN)
+            for (i in 0 until keypadArea.childCount) {
+                val child = keypadArea.getChildAt(i)
+                if (child is Button) {
+                    val isSpecial = child.text == "=" || child.text == "AC" || child.text == "0"
+                    child.setBackgroundResource(if(isSpecial) R.drawable.btn_spb else R.drawable.btn_cyber)
+                    child.background.setTintList(null)
+                    if ("+-×÷".contains(child.text)) child.setTextColor(Color.WHITE)
+                    else if (child.text == "0") child.setTextColor(Color.GREEN)
+                    else if (!isSpecial && child.text != "⌫") child.setTextColor(Color.WHITE)
+                }
+            }
+        } else {
+            window.statusBarColor = Color.parseColor("#E0E0E0")
+            rootView.setBackgroundColor(Color.parseColor("#F5F5F5"))
+            headerBox.setBackgroundColor(Color.WHITE)
+            topd.setTextColor(Color.BLUE)
+
+            secd.setBackgroundColor(Color.WHITE)
+            secd.setTextColor(Color.BLACK)
+            historyOverlay.setBackgroundColor(Color.WHITE)
+            btnSettings.setColorFilter(Color.DKGRAY)
+            btnHistory.setColorFilter(Color.DKGRAY)
+            keypadContainer.background.setTint(Color.parseColor("#E0E0E0"))
+            for (i in 0 until keypadArea.childCount) {
+                val child = keypadArea.getChildAt(i)
+                if (child is Button) {
+                    val isSpecial = child.text == "=" || child.text == "AC" || child.text == "0"
+                    val gd = GradientDrawable()
+                    gd.shape = GradientDrawable.RECTANGLE
+                    gd.cornerRadius = 20f
+                    gd.setColor(Color.WHITE)
+                    if (child.text == "AC") {
+                        gd.setStroke(6, Color.RED)
+                        child.setTextColor(Color.RED)
+                    } else if (child.text == "0") {
+                        gd.setStroke(6, Color.GREEN)
+                        child.setTextColor(Color.BLACK)
+                    } else if (child.text == "=") {
+                        gd.setStroke(6, Color.GREEN)
+                        gd.setColor(Color.parseColor("#E0FFE0"))
+                        child.setTextColor(Color.parseColor("#00AA00"))
+                    } else {
+                        gd.setStroke(3, Color.BLACK)
+                        if ("+-×÷".contains(child.text)) child.setTextColor(Color.BLUE)
+                        else if (child.text == "⌫") child.setTextColor(Color.RED)
+                        else child.setTextColor(Color.BLACK)
+                    }
+                    child.background = gd
+                }
+            }
+        }
+        expenseAdapter.notifyDataSetChanged()
+        summaryAdapter.notifyDataSetChanged()
+        updateTabVisuals(viewFlipper.displayedChild)
+    }
+
+    private fun getDynamicTextColor(): Int = if (isDarkMode) Color.WHITE else Color.BLACK
+
+    private fun verifyPaymentWithFirebase(dialog: AlertDialog) {
+        showFastToast("Checking database...")
+        db.collection("PremiumUsers").document(deviceRequestID.toString())
+            .get()
+            .addOnSuccessListener { document ->
+                if (document != null && document.getBoolean("isPro") == true) {
+                    isProVersion = true
+                    getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean("IS_PRO", true)
+                        .apply()
+                    saveGlobalSettings()
+                    showFastToast("🚀 PRO UNLOCKED!")
+                    dialog.dismiss()
+                } else {
+                    showFastToast("❌ Payment not found yet. Try again in a minute.")
+                }
+            }
+            .addOnFailureListener {
+                showFastToast("Network error. Check your internet connection.")
+            }
+    }
+
+    private fun syncProStatusWithServer() {
+        if (deviceRequestID == 0 || deviceRequestID == 9999) return
+        repository.syncProStatus(deviceRequestID) { isPro ->
+            if (isPro != isProVersion) {
+                isProVersion = isPro
+            }
+        }
+    }
+
+    private fun showSettingsDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null)
+        val dialog = AlertDialog.Builder(this).setView(dialogView).create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        val swSound = dialogView.findViewById<Switch>(R.id.swSound)
+        val swVib = dialogView.findViewById<Switch>(R.id.swVib)
+        val swTheme = dialogView.findViewById<Switch>(R.id.swTheme)
+        val bg = dialogView as LinearLayout
+        if(!isDarkMode) {
+            bg.background.setTint(Color.WHITE)
+            (bg.getChildAt(0) as TextView).setTextColor(Color.BLACK)
+            swSound.setTextColor(Color.BLACK); swVib.setTextColor(Color.BLACK); swTheme.setTextColor(Color.BLACK)
+        }
+        val container = dialogView as ViewGroup
+        val btnTools = Button(this)
+        btnTools.text = "🛠️ OPEN TOOLS"
+        btnTools.setTextColor(Color.WHITE)
+        btnTools.textSize = 16f
+        btnTools.background.setTint(Color.parseColor("#444444"))
+        btnTools.setPadding(0, 20, 0, 20)
+        val doneBtn = dialogView.findViewById<Button>(R.id.btnCloseSettings)
+        val index = container.indexOfChild(doneBtn)
+        val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        params.setMargins(0, 0, 0, 30)
+        btnTools.layoutParams = params
+        container.addView(btnTools, index)
+        swSound.isChecked = isSoundOn; swVib.isChecked = isVibrationOn; swTheme.isChecked = isDarkMode
+        swSound.setOnCheckedChangeListener { _, c -> isSoundOn = c; saveGlobalSettings() }
+        swVib.setOnCheckedChangeListener { _, c -> isVibrationOn = c; saveGlobalSettings() }
+        swTheme.setOnCheckedChangeListener { _, c ->
+            isDarkMode = c
+            saveGlobalSettings()
+            applyThemeManual()
+            if(!isDarkMode) {
+                bg.background.setTint(Color.WHITE)
+                (bg.getChildAt(0) as TextView).setTextColor(Color.BLACK)
+                swSound.setTextColor(Color.BLACK); swVib.setTextColor(Color.BLACK); swTheme.setTextColor(Color.BLACK)
+            } else {
+                bg.background.setTint(Color.parseColor("#EE111111"))
+                (bg.getChildAt(0) as TextView).setTextColor(Color.GREEN)
+                swSound.setTextColor(Color.WHITE); swVib.setTextColor(Color.WHITE); swTheme.setTextColor(Color.WHITE)
+            }
+        }
+        btnTools.setOnClickListener { performHaptic(); dialog.dismiss(); showUtilityDashboard() }
+        doneBtn.setOnClickListener { dialog.dismiss() }
+        dialog.show()
+    }
+
+    private fun showUtilityDashboard() {
+        val options = arrayOf("💱 Currency Converter", "📏 Distance (Km, M, Ft)", "⚖️ Weight Converter")
+        val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, options) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent) as TextView
+                view.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+                view.textSize = 18f
+                return view
+            }
+        }
+        val titleView = TextView(this)
+        titleView.text = "UTILITY STATION"
+        titleView.textSize = 22f
+        titleView.setTextColor(if(isDarkMode) Color.CYAN else Color.BLUE)
+        titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER
+        AlertDialog.Builder(this).setCustomTitle(titleView).setAdapter(adapter) { _, which ->
+            when(which) { 0 -> showCurrencyTool(); 1 -> showDistanceTool(); 2 -> showWeightTool() }
+        }.setNegativeButton("Close", null).create().apply {
+            window?.setBackgroundDrawableResource(if (isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+            listView.setBackgroundColor(if(isDarkMode) Color.parseColor("#1E1E1E") else Color.WHITE)
+            show()
+        }
+    }
+
+    private fun showCurrencyTool() {
+        val layout = LinearLayout(this); layout.orientation = LinearLayout.VERTICAL; layout.setPadding(60, 50, 60, 30)
+        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+        val lastRate = prefs.getFloat("LAST_RATE", 85.0f); val textColor = getDynamicTextColor()
+        val lbl1 = TextView(this); lbl1.text = "Exchange Rate:"; lbl1.setTextColor(Color.GRAY); layout.addView(lbl1)
+        val rateInput = EditText(this); rateInput.setText(lastRate.toString()); rateInput.setTextColor(textColor); layout.addView(rateInput)
+        val lbl2 = TextView(this); lbl2.text = "\nAmount (₹):"; lbl2.setTextColor(Color.GRAY); layout.addView(lbl2)
+        val amtInput = EditText(this); amtInput.setText(formatBigDecimal(viewModel.rawGrandTotal)); amtInput.setTextColor(textColor); layout.addView(amtInput)
+        val resultText = TextView(this); resultText.text = "..."; resultText.textSize = 24f; resultText.gravity = Gravity.CENTER; layout.addView(resultText)
+        val titleView = TextView(this); titleView.text = "💱 Currency"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.gravity = Gravity.CENTER
+        val dialog = AlertDialog.Builder(this).setCustomTitle(titleView).setView(layout).setPositiveButton("CALCULATE") { _, _ -> }.setNegativeButton("BACK") { _, _ -> showUtilityDashboard() }.create()
+        dialog.window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val rate = rateInput.text.toString().toDoubleOrNull(); val amount = amtInput.text.toString().toDoubleOrNull()
+            if (rate != null && amount != null && rate != 0.0) {
+                performHaptic(); prefs.edit().putFloat("LAST_RATE", rate.toFloat()).apply()
+                val rateBD = BigDecimal.valueOf(rate); val amountBD = BigDecimal.valueOf(amount)
+                val res = amountBD.divide(rateBD, 2, RoundingMode.HALF_UP)
+                resultText.text = res.toPlainString(); resultText.setTextColor(if(isDarkMode) Color.CYAN else Color.BLUE)
+            } else resultText.text = "Invalid"
+        }
+    }
+
+    private fun showDistanceTool() {
+        val scrollView = ScrollView(this); val layout = LinearLayout(this); layout.orientation = LinearLayout.VERTICAL; layout.setPadding(60, 50, 60, 30); scrollView.addView(layout)
+        val textColor = getDynamicTextColor(); val input = EditText(this); input.hint = "Enter Value"; input.setTextColor(textColor); input.setHintTextColor(Color.LTGRAY); layout.addView(input)
+        val resText = TextView(this); resText.text = "---"; resText.textSize = 22f; resText.setTextColor(if(isDarkMode) Color.YELLOW else Color.parseColor("#FF8800")); resText.gravity = Gravity.CENTER; resText.setPadding(0, 30, 0, 0)
+        fun addPair(b1t: String, f1: Double, b2t: String, f2: Double, u1: String, u2: String) {
+            val box = LinearLayout(this); box.orientation = LinearLayout.HORIZONTAL; box.weightSum = 2f
+            val b1 = Button(this); b1.text = b1t; val b2 = Button(this); b2.text = b2t
+            b1.layoutParams = LinearLayout.LayoutParams(0, -2, 1f); b2.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            if(isDarkMode) { b1.setBackgroundColor(Color.DKGRAY); b2.setBackgroundColor(Color.DKGRAY); b1.setTextColor(Color.WHITE); b2.setTextColor(Color.WHITE) }
+            else { b1.setBackgroundColor(Color.LTGRAY); b2.setBackgroundColor(Color.LTGRAY); b1.setTextColor(Color.BLACK); b2.setTextColor(Color.BLACK) }
+            b1.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * f1)} $u2" } }
+            b2.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * f2)} $u1" } }
+            box.addView(b1); box.addView(b2); layout.addView(box)
+        }
+        addPair("Km ➡ Mi", 0.621371, "Mi ➡ Km", 1.60934, "Km", "Mi"); addPair("M ➡ Km", 0.001, "Km ➡ M", 1000.0, "m", "Km"); addPair("Ft ➡ M", 0.3048, "M ➡ Ft", 3.28084, "ft", "m")
+        layout.addView(resText)
+        val titleView = TextView(this); titleView.text = "📏 Distance Lab"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.gravity = Gravity.CENTER
+        AlertDialog.Builder(this).setCustomTitle(titleView).setView(scrollView).setNegativeButton("BACK") { _, _ -> showUtilityDashboard() }.create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
+    }
+
+    private fun showWeightTool() {
+        val layout = LinearLayout(this); layout.orientation = LinearLayout.VERTICAL; layout.setPadding(60, 50, 60, 30); val textColor = getDynamicTextColor()
+        val input = EditText(this); input.hint = "Enter Weight"; input.setTextColor(textColor); input.setHintTextColor(Color.LTGRAY); layout.addView(input)
+        val resText = TextView(this); resText.text = "---"; resText.textSize = 22f; resText.setTextColor(if(isDarkMode) Color.YELLOW else Color.parseColor("#FF8800")); resText.gravity = Gravity.CENTER; resText.setPadding(0, 30, 0, 0)
+        val btnBox = LinearLayout(this); btnBox.orientation = LinearLayout.HORIZONTAL; btnBox.weightSum = 2f; btnBox.setPadding(0, 20, 0, 0)
+        val btn1 = Button(this); btn1.text = "Kg ➡ Lbs"; btn1.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        val btn2 = Button(this); btn2.text = "Lbs ➡ Kg"; btn2.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        if(isDarkMode) { btn1.setBackgroundColor(Color.DKGRAY); btn2.setBackgroundColor(Color.DKGRAY); btn1.setTextColor(Color.WHITE); btn2.setTextColor(Color.WHITE) }
+        else { btn1.setBackgroundColor(Color.LTGRAY); btn2.setBackgroundColor(Color.LTGRAY); btn1.setTextColor(Color.BLACK); btn2.setTextColor(Color.BLACK) }
+        btn1.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v * 2.20462)} Lbs" } }
+        btn2.setOnClickListener { val v = input.text.toString().toDoubleOrNull(); if(v!=null) { performHaptic(); resText.text = "${DecimalFormat("#.##").format(v / 2.20462)} Kg" } }
+        btnBox.addView(btn1); btnBox.addView(btn2); layout.addView(btnBox); layout.addView(resText)
+        val titleView = TextView(this); titleView.text = "⚖️ Weight"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.gravity = Gravity.CENTER
+        AlertDialog.Builder(this).setCustomTitle(titleView).setView(layout).setNegativeButton("BACK") { _, _ -> showUtilityDashboard() }.create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
+    }
+
+    private fun sharePdfReport() {
+        if (!isProVersion) { showUpsellDialog(); return }; performHaptic()
+        val scrollView = ScrollView(this); val layout = LinearLayout(this); layout.orientation = LinearLayout.VERTICAL; layout.setPadding(50, 40, 50, 10); scrollView.addView(layout)
+        val titleInput = EditText(this); titleInput.hint = "Report Title"; titleInput.setTextColor(getDynamicTextColor()); titleInput.setHintTextColor(Color.GRAY); layout.addView(titleInput)
+        val sub = TextView(this); sub.text = "\nSelect Sheets:"; sub.setTextColor(Color.CYAN); layout.addView(sub)
+        val checkBoxList = ArrayList<CheckBox>()
+        for (i in 1..maxSheetID) {
+            val cb = CheckBox(this); cb.text = getSheetName(i); cb.setTextColor(if(isDarkMode) Color.LTGRAY else Color.DKGRAY)
+            if(i == currentSheetID) cb.isChecked = true; checkBoxList.add(cb); layout.addView(cb); cb.tag = i
+        }
+        val titleView = TextView(this); titleView.text = "📄 Generate Report"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.gravity = Gravity.CENTER
+        AlertDialog.Builder(this).setCustomTitle(titleView).setView(scrollView).setPositiveButton("GENERATE PDF") { _, _ ->
+            val selectedIDs = ArrayList<Int>()
+            for(cb in checkBoxList) { if(cb.isChecked) selectedIDs.add(cb.tag as Int) }
+            if(selectedIDs.isNotEmpty()) generateMultiSheetPdf(titleInput.text.toString().ifEmpty { "EXPENSE REPORT" }, selectedIDs)
+            else showFastToast("Select one sheet!")
+        }.setNegativeButton("Cancel", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
+    }
+
+    private fun generateMultiSheetPdf(title: String, sheetIds: ArrayList<Int>) {
+        showFastToast("Generating Glossy PDF...")
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val pdfDocument = PdfDocument()
+            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+            val paintBg = Paint().apply { color = Color.parseColor("#121212"); style = Paint.Style.FILL }
+            val paintText = Paint().apply { color = Color.LTGRAY; textSize = 14f; typeface = Typeface.MONOSPACE }
+            val paintHeader = Paint().apply { color = Color.GREEN; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+            val paintSub = Paint().apply { color = Color.CYAN; textSize = 18f; isFakeBoldText = true; textAlign = Paint.Align.LEFT }
+            val paintBar = Paint().apply { style = Paint.Style.FILL; isAntiAlias = true }
+
+            for (id in sheetIds) {
+                val items = repository.getExpensesForSheet(id)
+                val sheetName = getSheetName(id)
+
+                var sheetTotal = BigDecimal.ZERO
+                val catTotals = HashMap<String, BigDecimal>()
+                val memberTotals = HashMap<String, BigDecimal>()
+
+                for(item in items) {
+                    if (item.description.startsWith(SPLIT_PREFIX)) continue
+                    val price = item.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                    sheetTotal = sheetTotal.add(price)
+
+                    val cat = item.description.filter{it.isLetter()}.trim()
+                    if (cat.isNotEmpty()) {
+                        catTotals[cat] = catTotals.getOrDefault(cat, BigDecimal.ZERO).add(price)
+                    }
+                    if (item.assignedTo.isNotEmpty()) {
+                        memberTotals[item.assignedTo] = memberTotals.getOrDefault(item.assignedTo, BigDecimal.ZERO).add(price)
+                    }
+                }
+
+                var pageCount = 0
+                val itemsPerPage = 25
+                val totalPages = if(items.isEmpty()) 1 else (items.size + itemsPerPage - 1) / itemsPerPage
+
+                for (i in 0 until items.size step itemsPerPage) {
+                    val page = pdfDocument.startPage(pageInfo)
+                    val canvas = page.canvas
+                    canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
+                    canvas.drawText(title.uppercase(), 297f, 60f, paintHeader)
+                    canvas.drawText("Sheet: $sheetName", 50f, 100f, paintSub)
+                    canvas.drawText("Page ${pageCount+1}/$totalPages", 500f, 100f, paintText)
+                    canvas.drawText("ITEM", 50f, 140f, paintSub)
+                    canvas.drawText("AMOUNT", 500f, 140f, Paint().apply { color = Color.CYAN; textSize = 18f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT })
+                    var y = 170f
+                    val end = min(i + itemsPerPage, items.size)
+                    for (j in i until end) {
+                        val entity = items[j]
+                        if (entity.description.startsWith(SPLIT_PREFIX)) {
+                            var name = entity.description.replace(SPLIT_PREFIX, "").trim()
+                            if (name.contains("]")) name = name.substringAfter("]").trim()
+                            canvas.drawText("  ↳ $name", 50f, y, Paint().apply { color = Color.GRAY; textSize = 12f; typeface = Typeface.MONOSPACE })
+                            val priceVal = entity.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                            canvas.drawText(formatBigDecimal(priceVal), 500f, y, Paint().apply { color = Color.GRAY; textSize = 12f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.RIGHT })
+                        } else {
+                            val tag = if(entity.assignedTo.isNotEmpty()) " - ${entity.assignedTo}" else ""
+                            canvas.drawText("${entity.description}$tag", 50f, y, paintText)
+
+                            val priceVal = entity.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                            canvas.drawText(formatBigDecimal(priceVal), 500f, y, Paint().apply { color = Color.WHITE; textSize = 14f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.RIGHT })
+                        }
+                        y += 20f
+                    }
+
+                    if (end == items.size) {
+                        y += 30f
+                        canvas.drawText("TOTAL: ${formatBigDecimal(sheetTotal)}", 500f, y, Paint().apply { color = Color.GREEN; textSize = 20f; textAlign = Paint.Align.RIGHT; isFakeBoldText = true })
+
+                        if (memberTotals.isNotEmpty()) {
+                            y += 50f
+                            canvas.drawText("MEMBER TOTALS:", 50f, y, paintSub); y += 30f
+                            for ((name, t) in memberTotals) {
+                                if(y > 800f) break
+                                canvas.drawText("$name: ₹${formatBigDecimal(t)}", 60f, y, paintText)
+                                y += 20f
+                            }
+                        }
+
+                        if (catTotals.isNotEmpty()) {
+                            y += 40f
+                            canvas.drawText("SPENDING BREAKDOWN:", 50f, y, paintSub); y += 30f
+                            val maxVal = catTotals.values.maxOfOrNull { it.toFloat() } ?: 1f
+                            val sorted = catTotals.toList().sortedByDescending { it.second }
+
+                            for ((k, v) in sorted) {
+                                if(y > 800f) break
+                                val barColor = catColors.getOrElse(k) { Color.LTGRAY }
+                                val width = (v.toFloat() / maxVal) * 400f
+                                val safeWidth = if (width < 10f) 10f else width
+                                val rect = RectF(50f, y, 50f + safeWidth, y + 25f)
+                                GlossyRender.drawGlossyBar(canvas, rect, barColor, paintBar, isPdf = true)
+                                val barTextPaint = Paint().apply {
+                                    color = Color.WHITE; textSize = 14f; isFakeBoldText = true; setShadowLayer(3f, 1f, 1f, Color.BLACK)
+                                }
+                                canvas.drawText("$k: ${v.toInt()}", 60f, y + 18f, barTextPaint)
+                                y += 35f
+                            }
+                        }
+                    }
+                    pdfDocument.finishPage(page)
+                    pageCount++
+                }
+                if(items.isEmpty()) { val p = pdfDocument.startPage(pageInfo); p.canvas.drawRect(0f,0f,595f,842f,paintBg); p.canvas.drawText("(Empty)", 297f, 400f, paintText); pdfDocument.finishPage(p) }
+            }
+
+            withContext(Dispatchers.Main) {
+                try {
+                    val file = File(File(cacheDir, "reports").apply { mkdirs() }, "ExpenseReport.pdf")
+                    val os = FileOutputStream(file); pdfDocument.writeTo(os); pdfDocument.close(); os.close()
+                    val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.provider", file)
+                    startActivity(Intent.createChooser(Intent().apply { action = Intent.ACTION_SEND; addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); setDataAndType(uri, "application/pdf"); putExtra(Intent.EXTRA_STREAM, uri) }, "Share Report"))
+                } catch (e: Exception) {
+                    showFastToast("PDF Error")
+                    pdfDocument.close()
+                }
+            }
+        }
+    }
+
+    private fun showUpsellDialog() {
+        performHaptic()
+        val layout = LinearLayout(this)
+        layout.orientation = LinearLayout.VERTICAL
+        layout.setPadding(50, 40, 50, 10)
+
+        val titleView = TextView(this)
+        titleView.text = "💎 Upgrade to PRO"
+        titleView.textSize = 22f
+        titleView.setTextColor(Color.CYAN)
+        titleView.typeface = Typeface.DEFAULT_BOLD
+        titleView.gravity = Gravity.CENTER
+        titleView.setPadding(0, 0, 0, 20)
+        layout.addView(titleView)
+
+        val idText = TextView(this)
+        idText.text = "Device ID: $deviceRequestID"
+        idText.setTextColor(Color.YELLOW)
+        idText.textSize = 18f
+        idText.typeface = Typeface.DEFAULT_BOLD
+        idText.gravity = Gravity.CENTER
+        layout.addView(idText)
+
+        val instr = TextView(this)
+        instr.text = "\nTo Activate PRO Mode:\n1. Copy UPI ID below & Pay $PRO_PRICE.\n2. Send Screenshot + Device ID to Bot.\n3. Click Verify below once approved."
+        instr.setTextColor(Color.LTGRAY)
+        instr.textSize = 14f
+        layout.addView(instr)
+
+        val upiBox = LinearLayout(this)
+        upiBox.orientation = LinearLayout.HORIZONTAL
+        upiBox.setPadding(0, 20, 0, 20)
+        upiBox.gravity = Gravity.CENTER_VERTICAL
+
+        val upiIdString = "paytmqr2810050501011e876976d7ua@paytm"
+        val upiText = TextView(this)
+        upiText.text = upiIdString
+        upiText.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+        upiText.textSize = 12f
+        upiText.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        upiBox.addView(upiText)
+
+        val btnCopy = Button(this)
+        btnCopy.text = "COPY"
+        btnCopy.textSize = 12f
+        btnCopy.background.setTint(Color.DKGRAY)
+        btnCopy.setTextColor(Color.WHITE)
+        btnCopy.setOnClickListener {
+            performHaptic()
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = android.content.ClipData.newPlainText("UPI ID", upiIdString)
+            clipboard.setPrimaryClip(clip)
+            showFastToast("✅ UPI ID Copied!")
+        }
+        upiBox.addView(btnCopy)
+        layout.addView(upiBox)
+
+        val btnBuy = Button(this)
+        btnBuy.text = "🤖 OPEN TELEGRAM BOT"
+        btnBuy.setBackgroundColor(Color.parseColor("#0088cc"))
+        btnBuy.setTextColor(Color.WHITE)
+        btnBuy.setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PAYMENT_LINK))) }
+        layout.addView(btnBuy)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(layout)
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        val btnVerify = Button(this)
+        btnVerify.text = "VERIFY PAYMENT"
+        btnVerify.setBackgroundColor(Color.parseColor("#00AA00"))
+        btnVerify.setTextColor(Color.WHITE)
+        val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        params.setMargins(0, 20, 0, 0)
+        btnVerify.layoutParams = params
+
+        btnVerify.setOnClickListener {
+            performHaptic()
+            verifyPaymentWithFirebase(dialog)
+        }
+        layout.addView(btnVerify)
+
+        dialog.apply {
+            window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+            show()
+        }
+    }
+
+    private fun deleteCurrentSheet() { if (maxSheetID <= 1) { showFastToast("Cannot delete only sheet!"); return }; performHaptic(); AlertDialog.Builder(this).setTitle("Delete Sheet?").setMessage("Are you sure?").setPositiveButton("DELETE") { _, _ -> performDeleteSheetLogic() }.setNegativeButton("Cancel", null).show() }
+
+    private fun performDeleteSheetLogic() {
+        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+
+        viewModel.clearSheet(currentSheetID)
+
+        for (i in currentSheetID until maxSheetID) {
+            editor.putString("NAME_$i", prefs.getString("NAME_${i+1}", "SHEET ${i+1}") ?: "SHEET ${i+1}")
+        }
+        editor.remove("NAME_$maxSheetID")
+        maxSheetID--
+        editor.putInt("MAX_SHEETS", maxSheetID)
+
+        if (currentSheetID > maxSheetID) currentSheetID = maxSheetID
+        editor.putInt("LAST_OPEN_SHEET", currentSheetID)
+        editor.apply()
+
+        switchSheet(currentSheetID)
+        showFastToast("Sheet Deleted")
+    }
+
+    private fun goToNextSheet() {
+        performHaptic()
+        if (currentSheetID == maxSheetID) {
+            if (!isProVersion && maxSheetID >= FREE_SHEET_LIMIT) { showUpsellDialog(); return }
+            maxSheetID++
+            currentSheetID = maxSheetID
+            saveGlobalSettings()
+            switchSheet(currentSheetID)
+            showFastToast("Created New Sheet")
+        } else {
+            currentSheetID++
+            switchSheet(currentSheetID)
+            showFastToast(getSheetName(currentSheetID))
+        }
+    }
+
+    private fun goToPrevSheet() {
+        if (currentSheetID > 1) {
+            performHaptic()
+            currentSheetID--
+            switchSheet(currentSheetID)
+            showFastToast(getSheetName(currentSheetID))
+        } else {
+            showFastToast("Top Reached")
+        }
+    }
+
+    private fun switchSheet(sheetId: Int) {
+        currentSheetID = sheetId
+        saveGlobalSettings()
+        isSheetLocked = repository.isSheetLocked(sheetId)
+        projectName.text = getSheetName(sheetId)
+        secd.text = "0"
+        isDisplayingResult = false
+        updateSplitButtonState()
+
+        viewModel.loadSheet(sheetId)
+    }
+
+    inner class ExpenseAdapter(private var data: List<ExpenseEntity>) : RecyclerView.Adapter<ExpenseAdapter.ViewHolder>() {
+        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+            val nameView: TextView = view.findViewById(R.id.itemName)
+            val priceView: TextView = view.findViewById(R.id.itemPrice)
+        }
+
+        fun updateData(newData: List<ExpenseEntity>) {
+            this.data = newData
+            notifyDataSetChanged()
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder = ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false))
+
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val entity = data[position]
+
+            val tag = if(entity.assignedTo.isNotEmpty()) " - ${entity.assignedTo}" else ""
+            holder.nameView.text = "${entity.description}$tag"
+
+            val pVal = entity.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+            holder.priceView.text = "₹" + formatBigDecimal(pVal)
+
+            holder.nameView.setTextColor(Color.WHITE)
+            holder.nameView.textSize = 16f
+            holder.priceView.setTextColor(Color.WHITE)
+            holder.priceView.textSize = 16f
+
+            holder.itemView.setOnLongClickListener {
+                performHaptic()
+                confirmDeleteItem(entity)
+                true
+            }
+        }
+        override fun getItemCount() = data.size
+    }
+
+    private fun confirmDeleteItem(entity: ExpenseEntity) {
+        val titleView = TextView(this); titleView.text = "Delete Entry?"; titleView.textSize = 20f; titleView.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER
+        AlertDialog.Builder(this).setCustomTitle(titleView).setPositiveButton("DELETE") { _, _ ->
+            performHaptic()
+            viewModel.deleteExpense(entity)
+            showFastToast("Deleted")
+        }.setNegativeButton("CANCEL", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
+    }
+
+    inner class SummaryAdapter(private var data: List<String>) : RecyclerView.Adapter<SummaryAdapter.ViewHolder>() {
+        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+            val nameView: TextView = view.findViewById(R.id.itemName)
+            val priceView: TextView = view.findViewById(R.id.itemPrice)
+        }
+
+        fun updateData(newData: List<String>) {
+            this.data = newData
+            notifyDataSetChanged()
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            return ViewHolder(layoutInflater.inflate(R.layout.item_compact, parent, false))
+        }
+
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val item = data[position]
+            val parts = item.split(":")
+            if(parts.size >= 2) {
+                holder.nameView.text = parts[0].trim()
+                val pVal = parts.last().replace("₹", "").trim().toBigDecimalOrNull() ?: BigDecimal.ZERO
+                holder.priceView.text = "₹" + formatBigDecimal(pVal)
+                val color = catColors.getOrElse(parts[0].trim().filter { it.isLetter() }) { Color.WHITE }
+                holder.nameView.setTextColor(color)
+            } else {
+                holder.nameView.text = item
+                holder.priceView.text = ""
+                holder.nameView.setTextColor(Color.GRAY)
+            }
+            holder.priceView.setTextColor(Color.WHITE)
+            holder.nameView.textSize = 16f
+            holder.priceView.textSize = 16f
+
+            holder.itemView.setOnLongClickListener {
+                performHaptic()
+                if (item == SPLIT_HEADER_TEXT) {
+                    confirmDeleteSplit()
+                } else if (!item.startsWith(SPLIT_PREFIX) && item != "--- MEMBER TOTALS ---") {
+                    val catName = if(parts.size >= 2) parts[0].trim() else item
+                    performDeleteCategory(catName)
+                }
+                true
+            }
+        }
+        override fun getItemCount() = data.size
+    }
+
+    private fun confirmDeleteSplit() {
+        AlertDialog.Builder(this).setTitle("Remove Split?").setMessage("Remove the bill split/members? The Total Amount remains.").setPositiveButton("REMOVE") { _, _ ->
+            performHaptic()
+            isSheetLocked = false
+            repository.setSheetLocked(currentSheetID, false)
+            viewModel.removeAllSplits(currentSheetID)
+            updateSplitButtonState()
+            showFastToast("Split Removed")
+        }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun performDeleteCategory(category: String) {
+        AlertDialog.Builder(this).setTitle("Delete All $category?").setMessage("This will remove every single entry for $category.").setPositiveButton("DELETE ALL") { _, _ ->
+            performHaptic()
+            viewModel.deleteCategory(currentSheetID, category)
+            showFastToast("Deleted all $category")
+        }.setNegativeButton("Cancel", null).show()
+    }
+
+    // --- FIX FOR CRASH: Added isUpdating lock to prevent infinite loops ---
+    private fun showGlobalSplitDialog() {
+        val scrollView = ScrollView(this)
+        val mainLayout = LinearLayout(this)
+        mainLayout.orientation = LinearLayout.VERTICAL
+        mainLayout.setPadding(30, 30, 30, 30)
+        scrollView.addView(mainLayout)
+
+        val header = TextView(this)
+        header.text = "Split Bill (Total: ₹${formatBigDecimal(viewModel.rawGrandTotal)})"
+        header.textSize = 20f
+        header.setTextColor(Color.CYAN)
+        header.gravity = Gravity.CENTER
+        mainLayout.addView(header)
+
+        val remainingText = TextView(this)
+        remainingText.text = "Remaining: 100%"
+        remainingText.setTextColor(Color.GREEN)
+        remainingText.gravity = Gravity.CENTER
+        remainingText.setPadding(0, 10, 0, 10)
+        mainLayout.addView(remainingText)
+
+        val rowsContainer = LinearLayout(this)
+        rowsContainer.orientation = LinearLayout.VERTICAL
+        mainLayout.addView(rowsContainer)
+
+        val rowList = ArrayList<Pair<EditText, EditText>>()
+        var isUpdating = false // SAFETY LOCK FOR TEXTWATCHER
+
+        fun updateRemaining() {
+            if (isUpdating) return
+            var sumOthers = BigDecimal.ZERO
+
+            for (i in 0 until rowList.size - 1) {
+                val v = rowList[i].second.text.toString().toBigDecimalOrNull() ?: BigDecimal.ZERO
+                sumOthers = sumOthers.add(v)
+            }
+
+            val rem = BigDecimal("100").subtract(sumOthers)
+
+            if (rem < BigDecimal.ZERO) remainingText.setTextColor(Color.RED) else remainingText.setTextColor(Color.GREEN)
+            remainingText.text = "Remaining: $rem%"
+
+            if (rowList.isNotEmpty() && !rowList.last().second.hasFocus()) {
+                val currentText = rowList.last().second.text.toString()
+                val newText = rem.toPlainString()
+
+                if (currentText != newText) {
+                    isUpdating = true
+                    rowList.last().second.setText(newText)
+                    isUpdating = false
+                }
+            }
+        }
+
+        fun addRow(nameVal: String = "", percVal: String = "") {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.setPadding(0, 10, 0, 10)
+
+            val nEd = EditText(this)
+            nEd.hint = "Name"
+            nEd.setText(nameVal)
+            nEd.setTextColor(getDynamicTextColor())
+            nEd.setHintTextColor(Color.GRAY)
+            nEd.layoutParams = LinearLayout.LayoutParams(0, -2, 1.5f)
+
+            val pEd = EditText(this)
+            pEd.hint = "0 %"
+
+            // Set text WITHOUT triggering listeners (safely handled by isUpdating block later if needed)
+            pEd.setText(percVal)
+
+            pEd.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            pEd.setTextColor(getDynamicTextColor())
+            pEd.setHintTextColor(Color.GRAY)
+            pEd.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+
+            pEd.addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) { updateRemaining() }
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            })
+
+            row.addView(nEd)
+            row.addView(pEd)
+            rowsContainer.addView(row)
+            rowList.add(Pair(nEd, pEd))
+        }
+
+        val percString = repository.getGlobalSplitPercentages(currentSheetID)
+        val savedPercMap = HashMap<String, String>()
+        if (percString.isNotEmpty()) {
+            percString.split(",").forEach {
+                val parts = it.split("=")
+                if(parts.size == 2) savedPercMap[parts[0]] = parts[1]
+            }
+        }
+
+        val existingSplits = viewModel.expenses.value.filter { it.description.startsWith(SPLIT_PREFIX) && it.description.contains("[BILL SPLIT]") }
+        if (existingSplits.isNotEmpty()) {
+            isUpdating = true // Pause updates while building existing rows
+            for (item in existingSplits) {
+                val cleanName = item.description.substringAfter("]").trim()
+                val pVal = savedPercMap[cleanName] ?: "0"
+                addRow(cleanName, pVal)
+            }
+            isUpdating = false
+            updateRemaining() // Force one final safe update
+        } else {
+            isUpdating = true
+            addRow()
+            addRow()
+            isUpdating = false
+            updateRemaining()
+        }
+
+        val btnAddMember = Button(this)
+        btnAddMember.text = "+ ADD MEMBER"
+        btnAddMember.setBackgroundColor(Color.TRANSPARENT)
+        btnAddMember.setTextColor(Color.LTGRAY)
+        btnAddMember.setOnClickListener {
+            performHaptic()
+            addRow()
+            updateRemaining()
+        }
+        mainLayout.addView(btnAddMember)
+
+        val btnEqual = Button(this)
+        btnEqual.text = "⚖️ Split Equally"
+        btnEqual.setBackgroundColor(Color.DKGRAY)
+        btnEqual.setTextColor(Color.WHITE)
+        btnEqual.setOnClickListener {
+            performHaptic()
+            if (rowList.isNotEmpty()) {
+                val count = rowList.size
+                val basePerc = BigDecimal("100").divide(BigDecimal(count), 2, RoundingMode.FLOOR)
+                var remainder = BigDecimal("100")
+
+                isUpdating = true // Lock the text watcher during mass update
+                for (i in 0 until count) {
+                    if (i == count - 1) {
+                        rowList[i].second.setText(remainder.toPlainString())
+                    } else {
+                        rowList[i].second.setText(basePerc.toPlainString())
+                        remainder = remainder.subtract(basePerc)
+                    }
+                }
+                isUpdating = false
+                updateRemaining()
+            }
+        }
+        mainLayout.addView(btnEqual)
+
+        val btnSave = Button(this)
+        btnSave.text = "SAVE & LOCK"
+        btnSave.setBackgroundColor(Color.parseColor("#008800"))
+        btnSave.setTextColor(Color.WHITE)
+        mainLayout.addView(btnSave)
+
+        val dialog = AlertDialog.Builder(this).setView(scrollView).create()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
+        btnSave.setOnClickListener {
+            var sum = BigDecimal.ZERO
+            val percMap = HashMap<String, BigDecimal>()
+            for (pair in rowList) {
+                val n = pair.first.text.toString().trim()
+                val pStr = pair.second.text.toString()
+                if (n.isNotEmpty() && pStr.isNotEmpty()) {
+                    val p = pStr.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                    sum = sum.add(p)
+                    percMap[n] = p
+                }
+            }
+
+            if (sum.compareTo(BigDecimal("100")) == 0 || sum.compareTo(BigDecimal("100.00")) == 0) {
+                performHaptic()
+                viewModel.saveGlobalSplit(currentSheetID, percMap)
+                isSheetLocked = true
+                repository.setSheetLocked(currentSheetID, true)
+                updateSplitButtonState()
+                dialog.dismiss()
+                showFastToast("Locked & Saved")
+            } else {
+                showFastToast("Percentages must sum exactly to 100! (Current: $sum)")
+            }
+        }
+        dialog.window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+        dialog.show()
+    }
+
+    private fun showSetupGroupDialog() {
+        val scrollView = ScrollView(this)
+        val mainLayout = LinearLayout(this)
+        mainLayout.orientation = LinearLayout.VERTICAL
+        mainLayout.setPadding(50, 40, 50, 10)
+        scrollView.addView(mainLayout)
+
+        val header = TextView(this)
+        header.text = "Setup Group for Line Items"
+        header.textSize = 20f
+        header.setTextColor(Color.CYAN)
+        header.gravity = Gravity.CENTER
+        mainLayout.addView(header)
+
+        val rowsContainer = LinearLayout(this)
+        rowsContainer.orientation = LinearLayout.VERTICAL
+        mainLayout.addView(rowsContainer)
+
+        val rowList = ArrayList<EditText>()
+
+        fun addRow(nameVal: String = "") {
+            val nEd = EditText(this)
+            nEd.hint = "Friend's Name"
+            nEd.setText(nameVal)
+            nEd.setTextColor(getDynamicTextColor())
+            nEd.setHintTextColor(Color.GRAY)
+            val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            params.setMargins(0, 10, 0, 10)
+            nEd.layoutParams = params
+            rowsContainer.addView(nEd)
+            rowList.add(nEd)
+        }
+
+        val existingMembers = viewModel.activeMembers.value
+        if (existingMembers.isNotEmpty()) {
+            existingMembers.forEach { addRow(it) }
+        } else {
+            addRow()
+            addRow()
+        }
+
+        val btnAddMember = Button(this)
+        btnAddMember.text = "+ ADD MEMBER"
+        btnAddMember.setBackgroundColor(Color.TRANSPARENT)
+        btnAddMember.setTextColor(Color.LTGRAY)
+        btnAddMember.setOnClickListener { performHaptic(); addRow() }
+        mainLayout.addView(btnAddMember)
+
+        val btnSave = Button(this)
+        btnSave.text = "SAVE GROUP"
+        val gd = GradientDrawable()
+        gd.shape = GradientDrawable.RECTANGLE
+        gd.cornerRadius = 100f
+        gd.setColor(Color.parseColor("#008800"))
+        btnSave.background = gd
+        btnSave.setTextColor(Color.WHITE)
+        val btnParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        btnParams.setMargins(0, 20, 0, 0)
+        btnSave.layoutParams = btnParams
+        mainLayout.addView(btnSave)
+
+        val dialog = AlertDialog.Builder(this).setView(scrollView).create()
+
+        btnSave.setOnClickListener {
+            performHaptic()
+            val validNames = rowList.map { it.text.toString().trim() }.filter { it.isNotEmpty() }
+            viewModel.saveGroupMembers(currentSheetID, validNames)
+            dialog.dismiss()
+            showFastToast(if (validNames.isEmpty()) "Group Cleared & Sheet Wiped" else "Group Saved")
+        }
+
+        dialog.window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+        dialog.show()
+    }
+
+    private fun addExpenseItem(name: String, emoji: String, priceVal: Double) {
+        val priceBD = BigDecimal.valueOf(priceVal)
+        val potentialTotal = viewModel.rawGrandTotal.add(priceBD)
+
+        if (priceVal < 0) {
+            var currentCatTotal = BigDecimal.ZERO
+            for (item in viewModel.expenses.value) {
+                if (item.description.startsWith(SPLIT_PREFIX)) continue
+                val catName = item.description.filter { it.isLetter() }.trim()
+                if (catName == name.filter { it.isLetter() }.trim()) {
+                    val p = item.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                    currentCatTotal = currentCatTotal.add(p)
+                }
+            }
+            if (currentCatTotal.add(priceBD) < BigDecimal.ZERO) {
+                showFastToast("❌ Denied: $name cannot be negative")
+                performHaptic()
+                return
+            }
+        }
+
+        if (potentialTotal >= MAX_TOTAL_LIMIT) { showFastToast("Max Total Reached!"); return }
+
+        val activeMembers = viewModel.activeMembers.value
+        if (activeMembers.isNotEmpty()) {
+            val options = arrayOf("Shared / Everyone") + activeMembers.toTypedArray()
+
+            val titleView = TextView(this)
+            titleView.text = "Who paid for this?"
+            titleView.textSize = 20f
+            titleView.setTextColor(if(isDarkMode) Color.CYAN else Color.BLUE)
+            titleView.setPadding(40, 40, 40, 20)
+            titleView.typeface = Typeface.DEFAULT_BOLD
+            titleView.gravity = Gravity.CENTER
+
+            val customAdapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, options) {
+                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val view = super.getView(position, convertView, parent) as TextView
+                    view.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
+                    view.setBackgroundColor(if (isDarkMode) Color.parseColor("#1E1E1E") else Color.WHITE)
+                    return view
+                }
+            }
+
+            AlertDialog.Builder(this)
+                .setCustomTitle(titleView)
+                .setAdapter(customAdapter) { _, which ->
+                    val assignedTo = if (which == 0) "" else options[which]
+                    finalizeExpenseSave(name, emoji, priceBD, assignedTo)
+                }
+                .create().apply {
+                    window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
+                    listView.setBackgroundColor(if (isDarkMode) Color.parseColor("#1E1E1E") else Color.WHITE)
+                    show()
+                }
+        } else {
+            finalizeExpenseSave(name, emoji, priceBD, "")
+        }
+    }
+
+    private fun finalizeExpenseSave(name: String, emoji: String, priceBD: BigDecimal, assignedTo: String) {
+        viewModel.addExpense(currentSheetID, "$emoji $name", priceBD, assignedTo)
+        secd.text = "Saved!"
+        isDisplayingResult = true
+        isNewEntry = true
+    }
+
+    private fun setupCategoryButtons() {
+        findViewById<Button>(R.id.catCustom).setOnClickListener {
+            performHaptic(); val rawPrice = secd.text.toString()
+            if (isDisplayingResult || rawPrice == "0" || rawPrice.isEmpty()) return@setOnClickListener; val value = evaluateExpression(rawPrice); if (value == 0.0) return@setOnClickListener
+            val input = EditText(this); input.hint = "Item Name"; input.setTextColor(getDynamicTextColor()); val titleView = TextView(this); titleView.text = "Custom Item"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(20, 20, 20, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER
+            val dialog = AlertDialog.Builder(this).setCustomTitle(titleView).setView(input).setPositiveButton("ADD") { _, _ -> addExpenseItem(if(input.text.toString().isEmpty()) "Custom" else input.text.toString(), "📝", value) }.create(); dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(Color.parseColor("#00FF00")) }; dialog.window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); dialog.show()
+        }
+        val cats = mapOf(R.id.catFood to Pair("Food", "🍔"), R.id.catRent to Pair("Rent", "🏠"), R.id.catTravel to Pair("Travel", "🚕"), R.id.catFuel to Pair("Fuel", "⛽"), R.id.catShop to Pair("Shopping", "🛍️"), R.id.catMed to Pair("Health", "💊"), R.id.catGrocery to Pair("Grocery", "🛒"), R.id.catGym to Pair("Gym", "💪"), R.id.catWifi to Pair("Wifi", "🛜"), R.id.catPower to Pair("Electricity", "⚡"), R.id.catCable to Pair("Cable", "📺"), R.id.catWater to Pair("Water", "💧"), R.id.catRefresh to Pair("Drinks", "🍺"), R.id.catSchool to Pair("School", "🏫"), R.id.catTuition to Pair("Tuition", "📚"), R.id.catHelp to Pair("Maid", "👩"))
+        for ((id, pair) in cats) {
+            val btn = findViewById<Button>(id); val content = btn.text.toString(); val nlIndex = content.indexOf('\n'); if (nlIndex > 0) { val span = SpannableString(content); span.setSpan(RelativeSizeSpan(2.0f), 0, nlIndex, 0); btn.text = span }
+            btn.setOnClickListener { performHaptic(); val rawExpr = secd.text.toString(); if (isDisplayingResult || rawExpr.isEmpty()) return@setOnClickListener; val value = evaluateExpression(rawExpr); if (value == 0.0) return@setOnClickListener; addExpenseItem(pair.first, pair.second, value) }
+        }
+    }
+
+    private fun setupCalculatorButtons() {
+        val numButtons = listOf(R.id.btn0, R.id.btn1, R.id.btn2, R.id.btn3, R.id.btn4, R.id.btn5, R.id.btn6, R.id.btn7, R.id.btn8, R.id.btn9)
+        for (id in numButtons) { findViewById<Button>(id).setOnClickListener { performHaptic(); if (secd.text.length >= MAX_INPUT_DIGITS && !isDisplayingResult) return@setOnClickListener; if (isNewEntry || isDisplayingResult) { secd.text = ""; isNewEntry = false; isDisplayingResult = false }; secd.append((it as Button).text.toString()) } }
+        findViewById<Button>(R.id.btnDot).setOnClickListener { performHaptic(); if (isNewEntry || isDisplayingResult) { secd.text = "0."; isNewEntry = false; isDisplayingResult = false; return@setOnClickListener }; if (!secd.text.toString().split('+', '-', '×', '÷').last().contains(".")) secd.append(".") }
+        val opButtons = mapOf(R.id.btnAdd to "+", R.id.btnSub to "-", R.id.btnMul to "×", R.id.btnDiv to "÷")
+        for ((id, op) in opButtons) { findViewById<Button>(id).setOnClickListener { performHaptic(); if (isDisplayingResult) { secd.text = "0"; isDisplayingResult = false; isNewEntry = false }; if (isNewEntry) isNewEntry = false; val current = secd.text.toString(); if (current.isNotEmpty()) { if ("+-×÷".contains(current.last())) secd.text = current.dropLast(1) + op else secd.append(op) } else if (op == "-") secd.append("-") } }
+        findViewById<Button>(R.id.btnDel).setOnClickListener { performHaptic(); val s = secd.text.toString(); if (s.isNotEmpty() && !isDisplayingResult) { secd.text = s.dropLast(1); if (secd.text.isEmpty()) secd.text = "0" } }
+        findViewById<Button>(R.id.btnShare).setOnClickListener { if (!isProVersion) showUpsellDialog() else sharePdfReport() }
+    }
+
+    private fun setupACButtonTouch() {
+        val btnAC = findViewById<Button>(R.id.btnAC); btnAC.setOnClickListener { performHaptic(); secd.text = "0"; isNewEntry = true; isDisplayingResult = false }
+        btnAC.setOnLongClickListener {
+            performHaptic()
+            viewModel.clearSheet(currentSheetID)
+            isSheetLocked = false
+            repository.setSheetLocked(currentSheetID, false)
+            updateSplitButtonState()
+            secd.text = "0"
+            showFastToast("Sheet Wiped")
+            isDisplayingResult = false
+            true
+        }
+    }
+
+    private fun showChart() {
+        performHaptic()
+        chartContainer.removeAllViews()
+        chartContainer.orientation = LinearLayout.VERTICAL
+
+        val dataMap = HashMap<String, Float>()
+        for(item in viewModel.summaryItems.value) {
+            if (item.startsWith(SPLIT_PREFIX) || item == SPLIT_HEADER_TEXT || item == "--- MEMBER TOTALS ---") continue
+
+            val parts = item.split(":")
+            if(parts.size == 2) {
+                val cat = parts[0].trim().filter{it.isLetter()}
+                val amt = parts[1].replace("₹","").trim().toFloatOrNull()?:0f
+                if (cat.isNotEmpty()) {
+                    dataMap[cat] = amt
+                }
+            }
+        }
+
+        if (dataMap.isNotEmpty()) {
+            val maxVal = dataMap.values.maxOrNull() ?: 1f
+            val sorted = dataMap.toList().sortedByDescending { it.second }
+
+            var delayIdx = 0L
+            for ((k, v) in sorted) {
+                val bar = GlossyBarView(this)
+                val color = catColors.getOrElse(k) { Color.WHITE }
+                val percent = v / maxVal
+
+                bar.setup(k, "₹${v.toInt()}", percent, color)
+                chartContainer.addView(bar)
+                handler.postDelayed({ bar.animateBar() }, delayIdx * 50)
+                delayIdx++
+            }
+            chartOverlay.visibility = View.VISIBLE
+        } else {
+            showFastToast("No Data to Chart!")
+        }
+    }
+
+    private fun setupZeroButtonTouch() {
+        val btn0 = findViewById<Button>(R.id.btn0)
+        chartRunnable = Runnable { showChart() }
+        btn0.setOnTouchListener { _, event ->
+            if(event.action == MotionEvent.ACTION_DOWN) {
+                handler.postDelayed(chartRunnable!!, 500)
+                true
+            } else if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
+                handler.removeCallbacks(chartRunnable!!)
+                if (event.eventTime - event.downTime < 500) {
+                    performHaptic()
+                    if (isNewEntry || isDisplayingResult) { secd.text = ""; isNewEntry = false; isDisplayingResult = false }
+                    secd.append("0")
+                }
+                true
+            } else false
+        }
+    }
+
+    private fun setupEqualButtonTouch() { val btnEqual = findViewById<Button>(R.id.btnEqual); longPressRunnable = Runnable { isSheetMode = true; performHaptic(); overlayContainer.visibility = View.VISIBLE; overlayContainer.bringToFront(); updateOverlayList(currentSheetID) }; btnEqual.setOnTouchListener { _, event -> if (gestureDetector.onTouchEvent(event)) { handler.removeCallbacks(longPressRunnable!!); isSheetMode = false; overlayContainer.visibility = View.GONE; return@setOnTouchListener true }; when (event.action) { MotionEvent.ACTION_DOWN -> { touchStartY = event.rawY; isSheetMode = false; tempSheetID = currentSheetID; handler.postDelayed(longPressRunnable!!, 300); true } MotionEvent.ACTION_MOVE -> { if (isSheetMode) { val steps = ((touchStartY - event.rawY).toInt() / 30); var pot = currentSheetID + steps; if (pot < 1) pot = 1; if (pot > maxSheetID) pot = maxSheetID; if (pot != tempSheetID) { performHaptic(); tempSheetID = pot; updateOverlayList(tempSheetID) } } else if (abs(touchStartY - event.rawY) > 50) handler.removeCallbacks(longPressRunnable!!); true } MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { handler.removeCallbacks(longPressRunnable!!); if (isSheetMode) { overlayContainer.visibility = View.GONE; isSheetMode = false; if (tempSheetID != currentSheetID) { switchSheet(tempSheetID); showFastToast("Opened ${getSheetName(currentSheetID)}") } } else performEqualClick(); true } else -> false } } }
+
+    private fun updateOverlayList(highlightID: Int) { val lines = ArrayList<String>(); for (i in (highlightID - 3)..(highlightID + 3)) { if (i < 1 || i > maxSheetID) lines.add(" ") else { val name = getSheetName(i); lines.add(if (i == highlightID) "▶ $name ◀" else name) } }; overlayText.text = lines.joinToString("\n") }
+
+    private fun performEqualClick() {
+        if (isDisplayingResult) return; performHaptic(); val result = evaluateExpression(secd.text.toString()); secd.text = formatBigDecimal(BigDecimal.valueOf(result)); isDisplayingResult = false; isNewEntry = true
+    }
+
+    private fun evaluateExpression(expr: String): Double {
+        if (expr.isEmpty()) return 0.0; var clean = expr.replace(" ", "").replace("×", "*").replace("÷", "/")
+        if (clean.startsWith("-")) clean = "0" + clean
+        if (clean.isNotEmpty() && "+-*/".contains(clean.last())) clean = clean.dropLast(1)
+        try { val nums = ArrayList<BigDecimal>(); val ops = ArrayList<Char>(); var cur = ""
+            for (c in clean) { if (c.isDigit() || c == '.') cur += c else if ("+-*/".contains(c)) { if (cur.isNotEmpty()) nums.add(cur.toBigDecimalOrNull() ?: BigDecimal.ZERO); cur = ""; ops.add(c) } }
+            if (cur.isNotEmpty()) nums.add(cur.toBigDecimalOrNull() ?: BigDecimal.ZERO)
+            if (nums.isEmpty()) return 0.0; if (nums.size == 1) return nums[0].toDouble()
+            var i = 0
+            while (i < ops.size) { if (ops[i] == '*' || ops[i] == '/') { val n1 = nums[i]; val n2 = nums[i+1]; var res = BigDecimal.ZERO; if (ops[i] == '*') res = n1.multiply(n2) else if (n2.compareTo(BigDecimal.ZERO) != 0) res = n1.divide(n2, 4, RoundingMode.HALF_UP); nums[i] = res; nums.removeAt(i+1); ops.removeAt(i) } else i++ }
+            var result = nums[0]; for (j in 0 until ops.size) { if (ops[j] == '+') result = result.add(nums[j+1]) else result = result.subtract(nums[j+1]) }; return result.toDouble()
+        } catch (e: Exception) { return 0.0 }
+    }
+
+    private fun loadGlobalSettings() {
+        isSoundOn = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).getBoolean("SOUND", true)
+        isVibrationOn = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).getBoolean("VIB", true)
+        isDarkMode = repository.isDarkMode()
+        maxSheetID = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).getInt("MAX_SHEETS", 1)
+        currentSheetID = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).getInt("LAST_OPEN_SHEET", 1)
+        isProVersion = repository.isProVersion()
+    }
+    private fun saveGlobalSettings() { getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit().putBoolean("SOUND", isSoundOn).putBoolean("VIB", isVibrationOn).putInt("MAX_SHEETS", maxSheetID).putInt("LAST_OPEN_SHEET", currentSheetID).apply(); repository.setDarkMode(isDarkMode); repository.setProVersion(isProVersion) }
+    private fun performHaptic() { if (isVibrationOn) { if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(50, -1)) else vibrator.vibrate(50) }; if (isSoundOn) toneGen.startTone(1, 50) }
+    private fun showFastToast(msg: String) { currentToast?.cancel(); currentToast = Toast.makeText(this, msg, 0); currentToast?.show() }
+    private fun formatBigDecimal(v: BigDecimal): String = try { v.setScale(2, RoundingMode.HALF_UP).toPlainString() } catch (e: Exception) { "0.00" }
+    private fun getSheetName(id: Int): String = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).getString("NAME_$id", "SHEET $id") ?: "SHEET $id"
+    private fun showRenameDialog() { performHaptic(); val input = EditText(this); input.setText(getSheetName(currentSheetID)); input.setTextColor(getDynamicTextColor()); input.setHintTextColor(Color.GRAY); val titleView = TextView(this); titleView.text = "Rename Sheet"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER; AlertDialog.Builder(this).setCustomTitle(titleView).setView(input).setPositiveButton("SAVE") { _, _ -> val n = input.text.toString().trim(); if (n.isNotEmpty()) { getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit().putString("NAME_$currentSheetID", n).apply(); projectName.text = n; showFastToast("Renamed to $n") } }.setNegativeButton("Cancel", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() } }
+}
+
+################################################
+FILE: SplashActivity.kt
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\SplashActivity.kt
+################################################
+
+package com.example.xpenselator
+
+import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.View
+import androidx.appcompat.app.AppCompatActivity
+
+class SplashActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Hide the status bar for full immersion
+        window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+
+        setContentView(R.layout.activity_splash)
+
+        // Wait 2 seconds (2000ms), then open MainActivity
+        Handler(Looper.getMainLooper()).postDelayed({
+            startActivity(Intent(this, MainActivity::class.java))
+            finish() // Destroys this activity so BACK button doesn't return here
+        }, 2000)
+    }
+}
+
+################################################
+FILE: btn_cyber.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\btn_cyber.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#000000" />
+            <stroke android:width="2dp" android:color="#00FF00" /> <corners android:radius="12dp" />
+            <padding android:left="5dp" android:top="5dp" android:right="5dp" android:bottom="5dp" />
+        </shape>
+    </item>
+
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#1A1A1A" /> <stroke android:width="2dp" android:color="#333333" /> <corners android:radius="12dp" />
+            <gradient
+                android:angle="270"
+                android:startColor="#2A2A2A"
+                android:endColor="#121212" />
+        </shape>
+    </item>
+</selector>
+
+################################################
+FILE: btn_spb.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\btn_spb.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#3300FF00"> <item>
+    <shape android:shape="rectangle">
+        <solid android:color="#111111" />
+
+        <stroke android:width="2dp" android:color="#00FF00" />
+
+        <corners android:radius="15dp" />
+    </shape>
+</item>
+</ripple>
+
+################################################
+FILE: glass_panel.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\glass_panel.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#CC000000" />
+
+    <stroke android:width="2dp" android:color="#33FFFFFF" />
+
+    <corners android:radius="20dp" />
+
+    <padding android:left="20dp" android:top="20dp" android:right="20dp" android:bottom="20dp" />
+</shape>
+
+################################################
+FILE: ic_folder.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\ic_folder.xml
+################################################
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:height="24dp" android:tint="#000000" android:viewportHeight="960" android:viewportWidth="960" android:width="24dp">
+      
+    <path android:fillColor="@android:color/white" android:pathData="M160,200L160,760L400,760L400,200L160,200ZM80,840L80,120L800,120L800,280Q790,280 780.5,280Q771,280 760,280Q749,280 739.5,280Q730,280 720,280L720,200L480,200L480,760L720,760L720,680Q730,680 739.5,680Q749,680 760,680Q771,680 780.5,680Q790,680 800,680L800,840L80,840ZM480,480L480,480L480,480Q480,480 480,480Q480,480 480,480Q480,480 480,480Q480,480 480,480L480,480L480,480ZM400,480L400,480L480,480L480,480L400,480ZM400,480L400,480L400,480L400,480ZM720,600L720,520L640,520L640,440L720,440L720,360L800,360L800,440L880,440L880,520L800,520L800,600L720,600Z"/>
+    
+</vector>
+
+################################################
+FILE: ic_launcher_background.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\ic_launcher_background.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<vector
+    android:height="108dp"
+    android:width="108dp"
+    android:viewportHeight="108"
+    android:viewportWidth="108"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+    <path android:fillColor="#3DDC84"
+          android:pathData="M0,0h108v108h-108z"/>
+    <path android:fillColor="#00000000" android:pathData="M9,0L9,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M19,0L19,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M29,0L29,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M39,0L39,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M49,0L49,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M59,0L59,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M69,0L69,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M79,0L79,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M89,0L89,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M99,0L99,108"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,9L108,9"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,19L108,19"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,29L108,29"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,39L108,39"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,49L108,49"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,59L108,59"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,69L108,69"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,79L108,79"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,89L108,89"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M0,99L108,99"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M19,29L89,29"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M19,39L89,39"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M19,49L89,49"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M19,59L89,59"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M19,69L89,69"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M19,79L89,79"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M29,19L29,89"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M39,19L39,89"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M49,19L49,89"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M59,19L59,89"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M69,19L69,89"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+    <path android:fillColor="#00000000" android:pathData="M79,19L79,89"
+          android:strokeColor="#33FFFFFF" android:strokeWidth="0.8"/>
+</vector>
+
+################################################
+FILE: ic_launcher_foreground.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\ic_launcher_foreground.xml
+################################################
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="85.84757"
+                android:endY="92.4963"
+                android:startX="42.9492"
+                android:startY="49.59793"
+                android:type="linear">
+                <item
+                    android:color="#44000000"
+                    android:offset="0.0" />
+                <item
+                    android:color="#00000000"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"
+        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
+        android:strokeWidth="1"
+        android:strokeColor="#00000000" />
+</vector>
+
+################################################
+FILE: ic_settings.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\ic_settings.xml
+################################################
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:height="24dp" android:tint="#000000" android:viewportHeight="24" android:viewportWidth="24" android:width="24dp">
+      
+    <path android:fillColor="@android:color/white" android:pathData="M19.14,12.94c0.04,-0.3 0.06,-0.61 0.06,-0.94c0,-0.32 -0.02,-0.64 -0.07,-0.94l2.03,-1.58c0.18,-0.14 0.23,-0.41 0.12,-0.61l-1.92,-3.32c-0.12,-0.22 -0.37,-0.29 -0.59,-0.22l-2.39,0.96c-0.5,-0.38 -1.03,-0.7 -1.62,-0.94L14.4,2.81c-0.04,-0.24 -0.24,-0.41 -0.48,-0.41h-3.84c-0.24,0 -0.43,0.17 -0.47,0.41L9.25,5.35C8.66,5.59 8.12,5.92 7.63,6.29L5.24,5.33c-0.22,-0.08 -0.47,0 -0.59,0.22L2.74,8.87C2.62,9.08 2.66,9.34 2.86,9.48l2.03,1.58C4.84,11.36 4.8,11.69 4.8,12s0.02,0.64 0.07,0.94l-2.03,1.58c-0.18,0.14 -0.23,0.41 -0.12,0.61l1.92,3.32c0.12,0.22 0.37,0.29 0.59,0.22l2.39,-0.96c0.5,0.38 1.03,0.7 1.62,0.94l0.36,2.54c0.05,0.24 0.24,0.41 0.48,0.41h3.84c0.24,0 0.44,-0.17 0.47,-0.41l0.36,-2.54c0.59,-0.24 1.13,-0.56 1.62,-0.94l2.39,0.96c0.22,0.08 0.47,0 0.59,-0.22l1.92,-3.32c0.12,-0.22 0.07,-0.47 -0.12,-0.61L19.14,12.94zM12,15.6c-1.98,0 -3.6,-1.62 -3.6,-3.6s1.62,-3.6 3.6,-3.6s3.6,1.62 3.6,3.6S13.98,15.6 12,15.6z"/>
+    
+</vector>
+
+################################################
+FILE: keypad_bg.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\keypad_bg.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#1A1A1A" />
+
+    <stroke android:width="1dp" android:color="#333333" />
+
+    <corners
+        android:topLeftRadius="25dp"
+        android:topRightRadius="25dp"
+        android:bottomLeftRadius="25dp"
+        android:bottomRightRadius="25dp" />
+</shape>
+
+################################################
+FILE: rounded_bg.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\rounded_bg.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#0A0A0A" /> <corners android:radius="15dp" /> <stroke android:width="1dp" android:color="#222222" /> </shape>
+
+################################################
+FILE: sheet_highlight.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\drawable\sheet_highlight.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#00000000" />
+
+    <stroke android:width="2dp" android:color="#AAFFFFFF" />
+
+    <corners android:radius="10dp" />
+</shape>
+
+################################################
+FILE: activity_main.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\layout\activity_main.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootView"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <LinearLayout
+        android:id="@+id/mainLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:weightSum="10">
+
+        <RelativeLayout
+            android:id="@+id/headerBox"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1.2"
+            android:background="#1E1E1E">
+
+            <ImageButton
+                android:id="@+id/btnSettings"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_settings"
+                android:background="@android:color/transparent"
+                android:scaleType="fitCenter"
+                android:padding="5dp"
+                android:layout_alignParentStart="true"
+                android:layout_alignParentTop="true"
+                android:layout_marginTop="12dp"
+                android:layout_marginStart="12dp"
+                android:contentDescription="Settings" />
+
+            <ImageButton
+                android:id="@+id/btnHistory"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_menu_recent_history"
+                android:background="@android:color/transparent"
+                android:scaleType="fitCenter"
+                android:padding="5dp"
+                android:layout_toEndOf="@id/btnSettings"
+                android:layout_alignTop="@id/btnSettings"
+                android:layout_marginStart="15dp"
+                app:tint="#888888"
+                android:contentDescription="History" />
+
+            <TextView
+                android:id="@+id/projectName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SHEET 1"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:layout_alignTop="@id/btnSettings"
+                android:layout_alignParentEnd="true"
+                android:layout_marginEnd="15dp"
+                android:layout_marginTop="8dp"/>
+
+            <TextView
+                android:id="@+id/grandTotalText"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:text="₹0"
+                android:gravity="end|center_vertical"
+                android:textColor="#00FF00"
+                android:textSize="50sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:paddingEnd="20dp"
+                android:paddingTop="15dp"
+                android:maxLines="1"
+                app:autoSizeTextType="uniform"
+                app:autoSizeMinTextSize="20sp"
+                app:autoSizeMaxTextSize="50sp"
+                app:autoSizeStepGranularity="2sp"/>
+        </RelativeLayout>
+
+        <TextView
+            android:id="@+id/inputDisplay"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="0.8"
+            android:text="0"
+            android:gravity="end|center_vertical"
+            android:textColor="#00FFFF"
+            android:textSize="35sp"
+            android:paddingEnd="20dp"
+            android:fontFamily="monospace"
+            android:background="#2C2C2C"
+            android:singleLine="true"
+            android:scrollHorizontally="true"
+            android:ellipsize="none"
+            android:layout_marginBottom="4dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:weightSum="2"
+            android:background="#151515">
+            <Button
+                android:id="@+id/tabHistory"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="🕒 HISTORY"
+                android:textColor="#00FF00"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:background="@android:color/transparent"
+                style="?android:attr/borderlessButtonStyle"/>
+            <View android:layout_width="1dp" android:layout_height="match_parent" android:background="#333333"/>
+            <Button
+                android:id="@+id/tabSummary"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:text="📊 SUMMARY"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:fontFamily="monospace"
+                android:background="@android:color/transparent"
+                style="?android:attr/borderlessButtonStyle"/>
+        </LinearLayout>
+
+        <ViewFlipper
+            android:id="@+id/viewFlipper"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="2.5"
+            android:layout_margin="10dp"
+            android:background="@drawable/rounded_bg"
+            android:clipToOutline="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical">
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/historyList"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="5dp"
+                    android:scrollbars="vertical"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/summaryList"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:padding="5dp"
+                    android:background="#1500FF00"
+                    android:scrollbars="vertical"/>
+
+                <Button
+                    android:id="@+id/btnSplitGlobal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="✂️ SPLIT BILL"
+                    android:textSize="14sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:backgroundTint="#008800"
+                    android:fontFamily="monospace"/>
+            </LinearLayout>
+        </ViewFlipper>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="5.5"
+            android:orientation="horizontal"
+            android:background="@drawable/keypad_bg"
+            android:layout_margin="5dp"
+            android:padding="5dp">
+
+            <GridLayout
+                android:id="@+id/keypadArea"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="3.2"
+                android:columnCount="4"
+                android:rowCount="5"
+                android:padding="2dp">
+
+                <Button android:id="@+id/btnAC" android:text="AC" android:background="@drawable/btn_spb" app:backgroundTint="@null" android:textColor="#FF0055" style="@style/CyberKey"/>
+                <Button android:text="÷" android:id="@+id/btnDiv" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+                <Button android:text="×" android:id="@+id/btnMul" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+                <Button android:text="⌫" android:id="@+id/btnDel" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FF0055" style="@style/CyberKey"/>
+
+                <Button android:text="7" android:id="@+id/btn7" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="8" android:id="@+id/btn8" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="9" android:id="@+id/btn9" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="-" android:id="@+id/btnSub" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+
+                <Button android:text="4" android:id="@+id/btn4" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="5" android:id="@+id/btn5" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="6" android:id="@+id/btn6" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="+" android:id="@+id/btnAdd" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FFFF" style="@style/CyberKey"/>
+
+                <Button android:text="1" android:id="@+id/btn1" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="2" android:id="@+id/btn2" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+                <Button android:text="3" android:id="@+id/btn3" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+
+                <Button
+                    android:id="@+id/btnEqual"
+                    android:text="="
+                    android:textSize="24sp"
+                    android:background="@drawable/btn_spb"
+                    app:backgroundTint="@null"
+                    android:textColor="#00FF00"
+                    android:layout_rowSpan="2"
+                    android:layout_height="0dp"
+                    android:layout_rowWeight="2"
+                    style="@style/CyberKey"/>
+
+                <Button
+                    android:id="@+id/btn0"
+                    android:text="0"
+                    android:background="@drawable/btn_spb"
+                    app:backgroundTint="@null"
+                    android:layout_columnSpan="2"
+                    android:layout_gravity="fill"
+                    style="@style/CyberKey"/>
+
+                <Button android:text="." android:id="@+id/btnDot" android:background="@drawable/btn_cyber" app:backgroundTint="@null" style="@style/CyberKey"/>
+            </GridLayout>
+
+            <ScrollView
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="2dp">
+
+                    <Button android:id="@+id/catCustom" android:text="✨\nCUSTOM" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catFood" android:text="🍔\nFOOD" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catRent" android:text="🏠\nRENT" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catTravel" android:text="🚕\nTRAVEL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catFuel" android:text="⛽\nFUEL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catShop" android:text="🛍️\nSHOPPING" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catMed" android:text="💊\nHEALTH" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catGrocery" android:text="🛒\nGROCERY" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catGym" android:text="💪\nGYM" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catWifi" android:text="🛜\nWIFI" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catPower" android:text="⚡\nELECTRICITY" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catCable" android:text="📺\nCABLE TV" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catWater" android:text="💧\nWATER" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catRefresh" android:text="🍺\nDRINKS" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFA500" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catSchool" android:text="🏫\nSCHOOL" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00FF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catTuition" android:text="📚\nTUITION" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFF00" style="@style/IconBtn"/>
+                    <Button android:id="@+id/catHelp" android:text="👩\nMAID" android:lineSpacingExtra="8dp" android:textSize="10sp" android:paddingTop="15dp" android:paddingBottom="10dp" android:gravity="bottom|center_horizontal" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#00BFFF" style="@style/IconBtn"/>
+                    <Button android:id="@+id/btnShare" android:text="SHARE" android:drawableTop="@android:drawable/ic_menu_share" android:drawableTint="@android:color/white" android:padding="8dp" android:background="@drawable/btn_cyber" app:backgroundTint="@null" android:textColor="#FFFFFF" style="@style/IconBtn"/>
+                </LinearLayout>
+            </ScrollView>
+        </LinearLayout>
+    </LinearLayout>
+
+    <RelativeLayout
+        android:id="@+id/historyOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#151515"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        android:elevation="50dp">
+        <TextView android:id="@+id/historyTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="TIME MACHINE" android:textColor="#00FFFF" android:textSize="24sp" android:textStyle="bold" android:fontFamily="monospace" android:gravity="center" android:padding="20dp" android:background="#222222"/>
+        <ListView android:id="@+id/fullHistoryList" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_below="@id/historyTitle" android:layout_above="@id/btnCloseHistory" android:divider="#333333" android:dividerHeight="1dp"/>
+        <Button android:id="@+id/btnCloseHistory" android:layout_width="match_parent" android:layout_height="60dp" android:layout_alignParentBottom="true" android:text="CLOSE" android:background="@android:color/black" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold"/>
+    </RelativeLayout>
+
+    <RelativeLayout
+        android:id="@+id/chartOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#101010"
+        android:visibility="gone"
+        android:elevation="60dp"
+        android:clickable="true"
+        android:focusable="true">
+        <TextView android:id="@+id/chartTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="VISUAL ANALYTICS" android:textColor="#FFA500" android:textSize="24sp" android:textStyle="bold" android:fontFamily="monospace" android:gravity="center" android:padding="20dp" android:background="#222222"/>
+        <ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:layout_below="@id/chartTitle" android:layout_above="@id/btnCloseChart" android:layout_marginBottom="10dp" android:fillViewport="true">
+            <LinearLayout android:id="@+id/chartContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+        </ScrollView>
+        <Button android:id="@+id/btnCloseChart" android:layout_width="match_parent" android:layout_height="60dp" android:layout_alignParentBottom="true" android:text="CLOSE ANALYTICS" android:background="@android:color/black" android:textColor="#FFFFFF" android:textSize="18sp" android:textStyle="bold"/>
+    </RelativeLayout>
+
+    <RelativeLayout
+        android:id="@+id/sheetOverlayContainer"
+        android:layout_width="320dp"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:background="@drawable/glass_panel"
+        android:visibility="gone"
+        android:elevation="30dp"
+        android:padding="10dp">
+        <View android:layout_width="match_parent" android:layout_height="40dp" android:layout_centerInParent="true" android:background="@drawable/sheet_highlight" />
+        <TextView android:id="@+id/sheetOverlayText" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_centerInParent="true" android:text="SHEET 1\nSHEET 2\nSHEET 3" android:textSize="22sp" android:textColor="#FFFFFF" android:textStyle="bold" android:fontFamily="monospace" android:gravity="center" android:lineSpacingExtra="12dp"/>
+    </RelativeLayout>
+
+</RelativeLayout>
+
+################################################
+FILE: activity_splash.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\layout\activity_splash.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000B29">
+
+    <ImageView
+        android:id="@+id/imgLogo"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:layout_centerInParent="true"
+        android:src="@drawable/xpenselator_logo"
+        android:contentDescription="App Logo" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Powered by ByteMantis"
+        android:textColor="#00FF00"
+        android:fontFamily="monospace"
+        android:textSize="14sp"
+        android:layout_alignParentBottom="true"
+        android:layout_centerHorizontal="true"
+        android:layout_marginBottom="40dp" />
+
+</RelativeLayout>
+
+################################################
+FILE: dialog_settings.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\layout\dialog_settings.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/glass_panel"
+    android:padding="25dp"
+    android:layout_gravity="center">
+
+    <TextView
+        android:text="SYSTEM SETTINGS"
+        android:textSize="20sp"
+        android:textColor="#00FF00"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:gravity="center"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="25dp"/>
+
+    <Switch
+        android:id="@+id/swSound"
+        android:text="Sound Effects"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="15dp"/>
+
+    <Switch
+        android:id="@+id/swVib"
+        android:text="Haptic Vibrate"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="15dp"/>
+
+    <Switch
+        android:id="@+id/swTheme"
+        android:text="Dark Mode"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="10dp"
+        android:thumbTint="#00FF00"
+        android:trackTint="#5500FF00"
+        android:layout_marginBottom="25dp"/>
+
+    <Button
+        android:id="@+id/btnCloseSettings"
+        android:text="DONE"
+        android:textColor="#000000"
+        android:backgroundTint="#00FF00"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+</LinearLayout>
+
+################################################
+FILE: item_compact.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\layout\item_compact.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/itemName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="Item Name"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:gravity="center_vertical|start" />
+
+    <TextView
+        android:id="@+id/itemPrice"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="₹0.00"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:gravity="end|center_vertical"
+        android:paddingStart="10dp"
+        android:maxLines="1" />
+
+</LinearLayout>
+
+################################################
+FILE: item_summary_glossy.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\layout\item_summary_glossy.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="2dp">
+
+    <com.example.xpenselator.GlossyBarView
+        android:id="@+id/glossyBar"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"/>
+
+</LinearLayout>
+
+################################################
+FILE: list_item.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\layout\list_item.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/text1"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:textColor="#FFFFFF"
+    android:textSize="16sp"
+    android:padding="8dp"
+    android:fontFamily="monospace"
+    android:gravity="center_vertical" />
+
+################################################
+FILE: ic_launcher.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\mipmap-anydpi-v26\ic_launcher.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>
+
+################################################
+FILE: ic_launcher_round.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\mipmap-anydpi-v26\ic_launcher_round.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>
+
+################################################
+FILE: colors.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\values\colors.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
+
+################################################
+FILE: ic_launcher_background.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\values\ic_launcher_background.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#000B29</color>
+</resources>
+
+################################################
+FILE: strings.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\values\strings.xml
+################################################
+
+<resources>
+    <string name="app_name">Xpenselator</string>
+</resources>
+
+################################################
+FILE: themes.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\values\themes.xml
+################################################
+
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Base.Theme.Xpenselator" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your light theme here. -->
+        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+    </style>
+
+    <style name="Theme.Xpenselator" parent="Base.Theme.Xpenselator" />
+    <style name="CyberKey">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">0dp</item>
+        <item name="android:layout_columnWeight">1</item>
+        <item name="android:layout_rowWeight">1</item>
+        <item name="android:layout_margin">3dp</item>
+        <item name="android:textSize">20sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">#FFFFFF</item>
+    </style>
+
+    <style name="IconBtn">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">70dp</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:layout_marginBottom">10dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+    </style>
+
+</resources>
+
+################################################
+FILE: themes.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\values-night\themes.xml
+################################################
+
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Base.Theme.Xpenselator" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your dark theme here. -->
+        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+    </style>
+</resources>
+
+################################################
+FILE: backup_rules.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\xml\backup_rules.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample backup rules file; uncomment and customize as necessary.
+   See https://developer.android.com/guide/topics/data/autobackup
+   for details.
+   Note: This file is ignored for devices older than API 31
+   See https://developer.android.com/about/versions/12/backup-restore
+-->
+<full-backup-content>
+    <!--
+   <include domain="sharedpref" path="."/>
+   <exclude domain="sharedpref" path="device.xml"/>
+-->
+</full-backup-content>
+
+################################################
+FILE: data_extraction_rules.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\xml\data_extraction_rules.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample data extraction rules file; uncomment and customize as necessary.
+   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
+   for details.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- TODO: Use <include> and <exclude> to control what is backed up.
+        <include .../>
+        <exclude .../>
+        -->
+    </cloud-backup>
+    <!--
+    <device-transfer>
+        <include .../>
+        <exclude .../>
+    </device-transfer>
+    -->
+</data-extraction-rules>
+
+################################################
+FILE: provider_paths.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\xml\provider_paths.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="external_files" path="."/>
+    <cache-path name="cache" path="."/>
+</paths>
+
+################################################
+FILE: AndroidManifest.xml
+PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\AndroidManifest.xml
+################################################
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Xpenselator">
+
+        <activity
+            android:name=".SplashActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AppCompat.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"/>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/provider_paths" />
+        </provider>
+
+    </application>
+</manifest>
