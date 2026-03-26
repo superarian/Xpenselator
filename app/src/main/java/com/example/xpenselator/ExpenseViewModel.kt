@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.text.NumberFormat
+import java.util.Locale
 
 class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() {
 
@@ -25,6 +27,17 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
     val activeMembers: StateFlow<List<String>> = _activeMembers
 
     var rawGrandTotal = BigDecimal.ZERO
+
+    // NEW: Centralized Indian Format for ViewModel Strings
+    private fun formatIndian(v: BigDecimal): String {
+        return try {
+            val formatter = NumberFormat.getNumberInstance(Locale("en", "IN")) as java.text.DecimalFormat
+            formatter.applyPattern("##,##,##0.00")
+            formatter.format(v)
+        } catch (e: Exception) {
+            "0.00"
+        }
+    }
 
     fun loadSheet(sheetId: Int) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -48,24 +61,24 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
                         memberTotals[item.assignedTo] = memberTotals.getOrDefault(item.assignedTo, BigDecimal.ZERO).add(amt)
                     }
                 } else {
-                    splits.add("${item.description}: ₹${item.amount}")
+                    splits.add("${item.description}: ₹${formatIndian(amt)}")
                 }
             }
 
             rawGrandTotal = total
-            _totalAmount.value = "₹" + total.setScale(2, RoundingMode.HALF_UP).toPlainString()
+            _totalAmount.value = "₹" + formatIndian(total)
 
             _activeMembers.value = repository.getGroupMembers(sheetId)
 
             val newSummary = ArrayList<String>()
             for ((name, t) in catTotals) {
-                newSummary.add("$name: ₹${t.setScale(2, RoundingMode.HALF_UP).toPlainString()}")
+                newSummary.add("$name: ₹${formatIndian(t)}")
             }
 
             if (memberTotals.isNotEmpty()) {
                 newSummary.add("--- MEMBER TOTALS ---")
                 for ((name, t) in memberTotals) {
-                    newSummary.add("$name: ₹${t.setScale(2, RoundingMode.HALF_UP).toPlainString()}")
+                    newSummary.add("$name: ₹${formatIndian(t)}")
                 }
             }
 
@@ -137,7 +150,6 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
         }
     }
 
-    // --- NEW: PERCENTAGE-BASED SAVING ---
     fun saveGlobalSplit(sheetId: Int, percentages: Map<String, BigDecimal>) {
         viewModelScope.launch(Dispatchers.IO) {
             val percString = percentages.map { "${it.key}=${it.value.toPlainString()}" }.joinToString(",")
@@ -151,7 +163,6 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
             }
 
             for ((name, _) in percentages) {
-                // Insert placeholders to register names; the auto engine will calculate real values instantly
                 repository.addExpense(ExpenseEntity(sheetId = sheetId, description = "↳ [BILL SPLIT] $name", amount = "0.00"))
             }
 
@@ -160,7 +171,6 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
         }
     }
 
-    // --- UPDATED: DYNAMIC PERCENTAGE ENGINE ---
     private fun autoUpdateGlobalSplits(sheetId: Int) {
         val currentList = repository.getExpensesForSheet(sheetId)
         var total = BigDecimal.ZERO
@@ -196,7 +206,6 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
                 val share: BigDecimal
 
                 if (i == splitMembers.size - 1) {
-                    // The last person gets the precise remainder to prevent 0.01 fractional errors
                     share = total.subtract(allocatedTotal)
                 } else {
                     val p = percMap[name] ?: BigDecimal.ZERO
