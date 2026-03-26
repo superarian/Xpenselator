@@ -290,8 +290,9 @@ class MainActivity : AppCompatActivity() {
                 expenseAdapter.updateData(historyOnly)
 
                 fullHistoryAdapter.clear()
+                val hasGroup = viewModel.activeMembers.value.isNotEmpty()
                 fullHistoryAdapter.addAll(historyOnly.map {
-                    val tag = if(it.assignedTo.isNotEmpty()) " - ${it.assignedTo}" else ""
+                    val tag = if(it.assignedTo.isNotEmpty()) " - ${it.assignedTo}" else if (hasGroup) " - Others" else ""
                     val pVal = it.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
                     "${it.description}$tag: ₹${formatBigDecimal(pVal)}"
                 })
@@ -310,6 +311,17 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launchWhenStarted {
             viewModel.activeMembers.collect {
                 updateSplitButtonState()
+                val historyOnly = viewModel.expenses.value.filter { !it.description.startsWith(SPLIT_PREFIX) }
+                expenseAdapter.notifyDataSetChanged()
+
+                fullHistoryAdapter.clear()
+                val hasGrp = it.isNotEmpty()
+                fullHistoryAdapter.addAll(historyOnly.map { e ->
+                    val tag = if(e.assignedTo.isNotEmpty()) " - ${e.assignedTo}" else if (hasGrp) " - Others" else ""
+                    val pVal = e.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
+                    "${e.description}$tag: ₹${formatBigDecimal(pVal)}"
+                })
+                fullHistoryAdapter.notifyDataSetChanged()
             }
         }
 
@@ -339,7 +351,6 @@ class MainActivity : AppCompatActivity() {
         setupACButtonTouch()
     }
 
-    // --- GLOBAL FORMATTING ENGINE ---
     private fun formatBigDecimal(v: BigDecimal): String {
         return try {
             val formatter = NumberFormat.getNumberInstance(Locale("en", "IN")) as DecimalFormat
@@ -372,11 +383,8 @@ class MainActivity : AppCompatActivity() {
         secd.text = formatExpressionWithCommas(str.replace(",", ""))
     }
 
-    // --- UNIFIED INPUT GATEWAY ---
     private fun handleDigitInput(digit: String) {
-        // ALWAYS trigger haptic feedback here
         performHaptic()
-
         val rawText = secd.text.toString().replace(",", "")
         if (rawText.length >= MAX_INPUT_DIGITS && !isDisplayingResult) {
             showFastToast("Max $MAX_INPUT_DIGITS digits limit reached!")
@@ -686,11 +694,32 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setCustomTitle(titleView).setView(layout).setNegativeButton("BACK") { _, _ -> showUtilityDashboard() }.create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
     }
 
-    // --- PDF SHARE DIALOG ---
+    // --- PDF SHARE DIALOG WITH PERSISTENT THEME MEMORY ---
     private fun sharePdfReport() {
         if (!isProVersion) { showUpsellDialog(); return }; performHaptic()
         val scrollView = ScrollView(this); val layout = LinearLayout(this); layout.orientation = LinearLayout.VERTICAL; layout.setPadding(50, 40, 50, 10); scrollView.addView(layout)
         val titleInput = EditText(this); titleInput.hint = "Report Title"; titleInput.setTextColor(getDynamicTextColor()); titleInput.setHintTextColor(Color.GRAY); layout.addView(titleInput)
+
+        // Load saved PDF theme preference (defaults to current app theme)
+        val prefs = getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+        val savedPdfDarkTheme = prefs.getBoolean("PDF_DARK_THEME", isDarkMode)
+
+        // Theme Selection
+        val themeSub = TextView(this); themeSub.text = "\nReport Theme:"; themeSub.setTextColor(Color.CYAN); layout.addView(themeSub)
+
+        val themeGroup = RadioGroup(this).apply { orientation = LinearLayout.HORIZONTAL }
+
+        // Explicitly assigning generated IDs fixes the selection bug!
+        val rbDark = RadioButton(this).apply { id = View.generateViewId(); text = "🌙 Dark  "; setTextColor(getDynamicTextColor()) }
+        val rbLight = RadioButton(this).apply { id = View.generateViewId(); text = "☀️ Light"; setTextColor(getDynamicTextColor()) }
+
+        themeGroup.addView(rbDark)
+        themeGroup.addView(rbLight)
+
+        // Set the checked state AFTER adding to the RadioGroup
+        if (savedPdfDarkTheme) themeGroup.check(rbDark.id) else themeGroup.check(rbLight.id)
+
+        layout.addView(themeGroup)
 
         val sub = TextView(this); sub.text = "\nSelect Sheets:"; sub.setTextColor(Color.CYAN); layout.addView(sub)
         val checkBoxList = ArrayList<CheckBox>()
@@ -699,94 +728,72 @@ class MainActivity : AppCompatActivity() {
             if(i == currentSheetID) cb.isChecked = true; checkBoxList.add(cb); layout.addView(cb); cb.tag = i
         }
         val titleView = TextView(this); titleView.text = "📄 Premium Report"; titleView.textSize = 20f; titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.gravity = Gravity.CENTER
+
         AlertDialog.Builder(this).setCustomTitle(titleView).setView(scrollView).setPositiveButton("GENERATE PDF") { _, _ ->
             val selectedIDs = ArrayList<Int>()
             for(cb in checkBoxList) { if(cb.isChecked) selectedIDs.add(cb.tag as Int) }
-            if(selectedIDs.isNotEmpty()) generateMultiSheetPdf(titleInput.text.toString().ifEmpty { "EXPENSE REPORT" }, selectedIDs)
-            else showFastToast("Select one sheet!")
+            if(selectedIDs.isNotEmpty()) {
+                val useDarkTheme = rbDark.isChecked
+
+                // Save the user's choice to device memory for next time
+                prefs.edit().putBoolean("PDF_DARK_THEME", useDarkTheme).apply()
+
+                generateMultiSheetPdf(titleInput.text.toString().ifEmpty { "EXPENSE REPORT" }, selectedIDs, useDarkTheme)
+            } else {
+                showFastToast("Select one sheet!")
+            }
         }.setNegativeButton("Cancel", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
     }
 
-    // --- 3D MATH ENGINE FOR PDF ---
-    private fun manipulateColor(color: Int, factor: Float): Int {
-        val a = Color.alpha(color)
-        val r = Math.min(Math.max((Color.red(color) * factor).toInt(), 0), 255)
-        val g = Math.min(Math.max((Color.green(color) * factor).toInt(), 0), 255)
-        val b = Math.min(Math.max((Color.blue(color) * factor).toInt(), 0), 255)
-        return Color.argb(a, r, g, b)
+    // --- HORIZONTAL GLOSSY BAR RENDERER ---
+    private fun drawGlossyHorizontalBarPdf(canvas: Canvas, x: Float, y: Float, w: Float, h: Float, baseColor: Int, isDarkTheme: Boolean) {
+        // Track (The empty background of the bar)
+        val trackColor = if (isDarkTheme) Color.parseColor("#33FFFFFF") else Color.parseColor("#15000000")
+        val trackPaint = Paint().apply { color = trackColor; style = Paint.Style.FILL; isAntiAlias = true }
+        canvas.drawRoundRect(RectF(x, y, x + 350f, y + h), 6f, 6f, trackPaint)
+
+        // Fill (The actual colored value)
+        val fillPaint = Paint().apply { color = baseColor; style = Paint.Style.FILL; isAntiAlias = true }
+        canvas.drawRoundRect(RectF(x, y, x + w, y + h), 6f, 6f, fillPaint)
+
+        // Gloss Overlay (Top Third of the filled bar for the specular highlight)
+        val glossPaint = Paint().apply { color = Color.parseColor("#44FFFFFF"); style = Paint.Style.FILL; isAntiAlias = true }
+        canvas.drawRoundRect(RectF(x, y, x + w, y + (h / 3f)), 6f, 6f, glossPaint)
     }
 
-    private fun draw3DBlock(canvas: Canvas, x: Float, y: Float, w: Float, h: Float, baseColor: Int) {
-        val dx = 12f // Isometric depth X
-        val dy = 10f // Isometric depth Y
-
-        val paint = Paint().apply { style = Paint.Style.FILL; isAntiAlias = true }
-
-        // Front Face
-        paint.color = baseColor
-        canvas.drawRect(x, y, x + w, y + h, paint)
-
-        // Top Face (Brighter)
-        paint.color = manipulateColor(baseColor, 1.25f)
-        val topPath = Path().apply {
-            moveTo(x, y)
-            lineTo(x + dx, y - dy)
-            lineTo(x + w + dx, y - dy)
-            lineTo(x + w, y)
-            close()
-        }
-        canvas.drawPath(topPath, paint)
-
-        // Right Side Face (Darker)
-        paint.color = manipulateColor(baseColor, 0.75f)
-        val sidePath = Path().apply {
-            moveTo(x + w, y)
-            lineTo(x + w + dx, y - dy)
-            lineTo(x + w + dx, y + h - dy)
-            lineTo(x + w, y + h)
-            close()
-        }
-        canvas.drawPath(sidePath, paint)
-
-        // Crispy Borders
-        paint.style = Paint.Style.STROKE
-        paint.color = Color.parseColor("#44000000")
-        paint.strokeWidth = 1f
-        canvas.drawRect(x, y, x + w, y + h, paint)
-        canvas.drawPath(topPath, paint)
-        canvas.drawPath(sidePath, paint)
-    }
-
-    // --- DYNAMICALLY PAGINATED 3D PDF GENERATOR ---
-    private fun generateMultiSheetPdf(title: String, sheetIds: ArrayList<Int>) {
+    // --- DYNAMIC THEMED PDF GENERATOR ---
+    private fun generateMultiSheetPdf(title: String, sheetIds: ArrayList<Int>, isDarkTheme: Boolean) {
         showFastToast("Generating Premium Report...")
 
         lifecycleScope.launch(Dispatchers.IO) {
             val pdfDocument = PdfDocument()
             val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
 
-            val paintBg = Paint().apply { color = Color.parseColor("#181A20"); style = Paint.Style.FILL }
-            val paintBoxBg = Paint().apply { color = Color.parseColor("#222831"); style = Paint.Style.FILL }
-            val paintBoxStroke = Paint().apply { color = Color.parseColor("#393E46"); style = Paint.Style.STROKE; strokeWidth = 1f }
+            // --- THEME PALETTE ENGINE ---
+            val paintBg = Paint().apply { color = if(isDarkTheme) Color.parseColor("#181A20") else Color.WHITE; style = Paint.Style.FILL }
+            val paintBoxBg = Paint().apply { color = if(isDarkTheme) Color.parseColor("#222831") else Color.parseColor("#F8F9FA"); style = Paint.Style.FILL }
+            val paintBoxStroke = Paint().apply { color = if(isDarkTheme) Color.parseColor("#393E46") else Color.parseColor("#E9ECEF"); style = Paint.Style.STROKE; strokeWidth = 1.5f }
 
-            val paintText = Paint().apply { color = Color.parseColor("#EEEEEE"); textSize = 14f; typeface = Typeface.DEFAULT }
-            val paintRightAlign = Paint().apply { color = Color.WHITE; textSize = 14f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.RIGHT }
-            val paintRightAlignCyan = Paint().apply { color = Color.CYAN; textSize = 14f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
-            val paintHeader = Paint().apply { color = Color.parseColor("#00ADB5"); textSize = 26f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-            val paintAccentTitle = Paint().apply { color = Color.parseColor("#00ADB5"); textSize = 14f; isFakeBoldText = true; textAlign = Paint.Align.LEFT }
-            val paintCenterText = Paint().apply { color = Color.WHITE; textSize = 14f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-            val paintCenterCyan = Paint().apply { color = Color.CYAN; textSize = 13f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.CENTER }
+            val paintText = Paint().apply { color = if(isDarkTheme) Color.parseColor("#EEEEEE") else Color.BLACK; textSize = 14f; typeface = Typeface.DEFAULT }
+            val paintSmallText = Paint().apply { color = if(isDarkTheme) Color.parseColor("#BBBBBB") else Color.DKGRAY; textSize = 12f; typeface = Typeface.DEFAULT; textAlign = Paint.Align.LEFT }
+            val paintRightAlign = Paint().apply { color = if(isDarkTheme) Color.WHITE else Color.BLACK; textSize = 14f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.RIGHT }
+            val paintRightAlignAccent = Paint().apply { color = if(isDarkTheme) Color.CYAN else Color.parseColor("#0056b3"); textSize = 14f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
+            val paintHeader = Paint().apply { color = if(isDarkTheme) Color.parseColor("#00ADB5") else Color.parseColor("#0056b3"); textSize = 26f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+            val paintAccentTitle = Paint().apply { color = if(isDarkTheme) Color.parseColor("#00ADB5") else Color.parseColor("#0056b3"); textSize = 14f; isFakeBoldText = true; textAlign = Paint.Align.LEFT }
+            val paintCenterText = Paint().apply { color = if(isDarkTheme) Color.WHITE else Color.BLACK; textSize = 14f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+            val paintCenterCyan = Paint().apply { color = if(isDarkTheme) Color.CYAN else Color.parseColor("#0056b3"); textSize = 13f; typeface = Typeface.MONOSPACE; textAlign = Paint.Align.CENTER }
 
             for (id in sheetIds) {
                 val allItems = repository.getExpensesForSheet(id)
                 val sheetName = getSheetName(id)
+                val sheetMembers = repository.getGroupMembers(id)
+                val hasGroup = sheetMembers.isNotEmpty()
 
                 val standardItems = ArrayList<ExpenseEntity>()
                 var sheetTotal = BigDecimal.ZERO
                 val catTotals = HashMap<String, BigDecimal>()
                 val memberTotals = HashMap<String, BigDecimal>()
 
-                // UNIFIED DATA LAYER: Intercept Setup Group AND Split Bill and route them identically
                 for(item in allItems) {
                     val price = item.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
 
@@ -803,8 +810,12 @@ class MainActivity : AppCompatActivity() {
                     val cat = item.description.filter{it.isLetter()}.trim()
                     if (cat.isNotEmpty()) catTotals[cat] = catTotals.getOrDefault(cat, BigDecimal.ZERO).add(price)
 
-                    if (item.assignedTo.isNotEmpty()) {
-                        memberTotals[item.assignedTo] = memberTotals.getOrDefault(item.assignedTo, BigDecimal.ZERO).add(price)
+                    val assigned = item.assignedTo
+                    if (hasGroup) {
+                        val targetName = if (assigned.isEmpty()) "Others" else assigned
+                        memberTotals[targetName] = memberTotals.getOrDefault(targetName, BigDecimal.ZERO).add(price)
+                    } else if (assigned.isNotEmpty()) {
+                        memberTotals[assigned] = memberTotals.getOrDefault(assigned, BigDecimal.ZERO).add(price)
                     }
                 }
 
@@ -812,7 +823,7 @@ class MainActivity : AppCompatActivity() {
                     val p = pdfDocument.startPage(pageInfo)
                     p.canvas.drawRect(0f,0f,595f,842f,paintBg)
                     p.canvas.drawText(title.uppercase(), 297f, 60f, paintHeader)
-                    p.canvas.drawText("Sheet: $sheetName", 297f, 100f, Paint().apply { color = Color.CYAN; textSize = 16f; isFakeBoldText = true; textAlign = Paint.Align.CENTER })
+                    p.canvas.drawText("Sheet: $sheetName", 297f, 100f, paintCenterCyan)
                     p.canvas.drawText("NO EXPENSES LOGGED YET", 297f, 400f, paintHeader)
                     pdfDocument.finishPage(p)
                     continue
@@ -826,7 +837,7 @@ class MainActivity : AppCompatActivity() {
                 fun drawPageHeaders() {
                     canvas.drawRect(0f, 0f, 595f, 842f, paintBg)
                     canvas.drawText(title.uppercase(), 297f, 60f, paintHeader)
-                    canvas.drawText("Sheet: $sheetName", 40f, 100f, Paint().apply { color = Color.WHITE; textSize = 16f; isFakeBoldText = true })
+                    canvas.drawText("Sheet: $sheetName", 40f, 100f, Paint().apply { color = if(isDarkTheme) Color.WHITE else Color.BLACK; textSize = 16f; isFakeBoldText = true })
                     canvas.drawText("Page $pageCount", 555f, 100f, Paint().apply { color = Color.GRAY; textSize = 12f; textAlign = Paint.Align.RIGHT })
                 }
 
@@ -841,7 +852,6 @@ class MainActivity : AppCompatActivity() {
 
                 drawPageHeaders()
 
-                // --- DYNAMIC GRID TABLE ---
                 var tableTop = y
                 val col1X = 50f
                 val col2X = 350f
@@ -850,7 +860,7 @@ class MainActivity : AppCompatActivity() {
                 fun drawTableHeader() {
                     canvas.drawRect(40f, y, 555f, y + 25f, paintBoxBg)
                     canvas.drawText("ITEM", col1X, y + 18f, paintAccentTitle)
-                    canvas.drawText("AMOUNT", col3X, y + 18f, paintRightAlignCyan)
+                    canvas.drawText("AMOUNT", col3X, y + 18f, paintRightAlignAccent)
                     y += 25f
                     canvas.drawLine(40f, y, 555f, y, paintBoxStroke)
                 }
@@ -859,7 +869,6 @@ class MainActivity : AppCompatActivity() {
 
                 for (j in 0 until standardItems.size) {
                     if (y > 780f) {
-                        // Close current table borders before breaking page
                         canvas.drawRect(40f, tableTop, 555f, y, paintBoxStroke)
                         canvas.drawLine(col2X, tableTop, col2X, y, paintBoxStroke)
                         startNewPage()
@@ -868,7 +877,9 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     val entity = standardItems[j]
-                    val tag = if(entity.assignedTo.isNotEmpty()) " - ${entity.assignedTo}" else ""
+
+                    val tag = if(entity.assignedTo.isNotEmpty()) " - ${entity.assignedTo}" else if (hasGroup) " - Others" else ""
+
                     canvas.drawText("${entity.description}$tag", col1X, y + 18f, paintText)
                     val priceVal = entity.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
                     canvas.drawText(formatBigDecimal(priceVal), col3X, y + 18f, paintRightAlign)
@@ -877,15 +888,15 @@ class MainActivity : AppCompatActivity() {
                     canvas.drawLine(40f, y, 555f, y, paintBoxStroke)
                 }
 
-                // Finalize last table borders
                 canvas.drawRect(40f, tableTop, 555f, y, paintBoxStroke)
                 canvas.drawLine(col2X, tableTop, col2X, y, paintBoxStroke)
 
                 y += 25f
                 if (y > 800f) { startNewPage() }
-                canvas.drawText("GRAND TOTAL: ₹${formatBigDecimal(sheetTotal)}", 555f, y, Paint().apply { color = Color.parseColor("#00FF00"); textSize = 20f; textAlign = Paint.Align.RIGHT; isFakeBoldText = true })
+                val totalColor = if (isDarkTheme) Color.parseColor("#00FF00") else Color.parseColor("#008800")
+                canvas.drawText("GRAND TOTAL: ₹${formatBigDecimal(sheetTotal)}", 555f, y, Paint().apply { color = totalColor; textSize = 20f; textAlign = Paint.Align.RIGHT; isFakeBoldText = true })
 
-                // --- UNIFIED MEMBER TOTALS CARDS ---
+                // --- MEMBER CARDS ---
                 if (memberTotals.isNotEmpty()) {
                     y += 40f
                     if (y > 780f) { startNewPage() }
@@ -902,7 +913,7 @@ class MainActivity : AppCompatActivity() {
                         }
                         if (y + cardH > 800f) {
                             startNewPage()
-                            cardX = 40f // Reset horizontal alignment for new page
+                            cardX = 40f
                         }
 
                         val cardRect = RectF(cardX, y, cardX + cardW, y + cardH)
@@ -918,12 +929,13 @@ class MainActivity : AppCompatActivity() {
                     y += cardH + 20f
                 }
 
-                // --- DYNAMIC HORIZONTAL 3D CHARTS ---
+                // --- GLOSSY HORIZONTAL CHARTS SECTION ---
                 if (catTotals.isNotEmpty()) {
                     y += 20f
                     if (y > 780f) { startNewPage() }
                     canvas.drawText("SPENDING BREAKDOWN", 40f, y, paintAccentTitle)
                     y += 30f
+
                     val maxVal = catTotals.values.maxOfOrNull { it.toFloat() } ?: 1f
                     val sorted = catTotals.toList().sortedByDescending { it.second }
 
@@ -933,10 +945,10 @@ class MainActivity : AppCompatActivity() {
                         val width = (v.toFloat() / maxVal) * 350f
                         val safeWidth = if (width < 10f) 10f else width
 
-                        draw3DBlock(canvas, 130f, y, safeWidth, 20f, barColor)
+                        drawGlossyHorizontalBarPdf(canvas, 130f, y, safeWidth, 20f, barColor, isDarkTheme)
 
                         canvas.drawText(k, 120f, y + 15f, paintRightAlign)
-                        canvas.drawText("₹${formatBigDecimal(v).replace(".00", "")}", 145f + safeWidth, y + 15f, Paint().apply { color = Color.WHITE; textSize = 13f })
+                        canvas.drawText("₹${formatBigDecimal(v).replace(".00", "")}", 140f + safeWidth, y + 15f, paintSmallText)
                         y += 35f
                     }
                 }
@@ -1121,7 +1133,8 @@ class MainActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val entity = data[position]
 
-            val tag = if(entity.assignedTo.isNotEmpty()) " - ${entity.assignedTo}" else ""
+            val hasGroup = viewModel.activeMembers.value.isNotEmpty()
+            val tag = if(entity.assignedTo.isNotEmpty()) " - ${entity.assignedTo}" else if (hasGroup) " - Others" else ""
             holder.nameView.text = "${entity.description}$tag"
 
             val pVal = entity.amount.toBigDecimalOrNull() ?: BigDecimal.ZERO
@@ -1242,7 +1255,7 @@ class MainActivity : AppCompatActivity() {
         mainLayout.addView(rowsContainer)
 
         val rowList = ArrayList<Pair<EditText, EditText>>()
-        var isUpdating = false // SAFETY LOCK FOR TEXTWATCHER
+        var isUpdating = false
 
         fun updateRemaining() {
             if (isUpdating) return
@@ -1315,14 +1328,14 @@ class MainActivity : AppCompatActivity() {
 
         val existingSplits = viewModel.expenses.value.filter { it.description.startsWith(SPLIT_PREFIX) && it.description.contains("[BILL SPLIT]") }
         if (existingSplits.isNotEmpty()) {
-            isUpdating = true // Pause updates while building existing rows
+            isUpdating = true
             for (item in existingSplits) {
                 val cleanName = item.description.substringAfter("]").trim()
                 val pVal = savedPercMap[cleanName] ?: "0"
                 addRow(cleanName, pVal)
             }
             isUpdating = false
-            updateRemaining() // Force one final safe update
+            updateRemaining()
         } else {
             isUpdating = true
             addRow()
@@ -1353,7 +1366,7 @@ class MainActivity : AppCompatActivity() {
                 val basePerc = BigDecimal("100").divide(BigDecimal(count), 2, RoundingMode.FLOOR)
                 var remainder = BigDecimal("100")
 
-                isUpdating = true // Lock the text watcher during mass update
+                isUpdating = true
                 for (i in 0 until count) {
                     if (i == count - 1) {
                         rowList[i].second.setText(remainder.toPlainString())
@@ -1506,7 +1519,7 @@ class MainActivity : AppCompatActivity() {
 
         val activeMembers = viewModel.activeMembers.value
         if (activeMembers.isNotEmpty()) {
-            val options = arrayOf("Shared / Everyone") + activeMembers.toTypedArray()
+            val options = arrayOf("Others") + activeMembers.toTypedArray()
 
             val titleView = TextView(this)
             titleView.text = "Who paid for this?"

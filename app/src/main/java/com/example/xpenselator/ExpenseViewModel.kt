@@ -28,7 +28,6 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
 
     var rawGrandTotal = BigDecimal.ZERO
 
-    // NEW: Centralized Indian Format for ViewModel Strings
     private fun formatIndian(v: BigDecimal): String {
         return try {
             val formatter = NumberFormat.getNumberInstance(Locale("en", "IN")) as java.text.DecimalFormat
@@ -44,6 +43,10 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
             val list = repository.getExpensesForSheet(sheetId)
             _expenses.value = list
 
+            val membersList = repository.getGroupMembers(sheetId)
+            _activeMembers.value = membersList
+            val hasGroup = membersList.isNotEmpty()
+
             var total = BigDecimal.ZERO
             val catTotals = HashMap<String, BigDecimal>()
             val memberTotals = HashMap<String, BigDecimal>()
@@ -57,8 +60,14 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
                     if (catName.isNotEmpty()) {
                         catTotals[catName] = catTotals.getOrDefault(catName, BigDecimal.ZERO).add(amt)
                     }
-                    if (item.assignedTo.isNotEmpty()) {
-                        memberTotals[item.assignedTo] = memberTotals.getOrDefault(item.assignedTo, BigDecimal.ZERO).add(amt)
+
+                    // DYNAMIC "OTHERS" ROUTING
+                    val assigned = item.assignedTo
+                    if (hasGroup) {
+                        val targetName = if (assigned.isEmpty()) "Others" else assigned
+                        memberTotals[targetName] = memberTotals.getOrDefault(targetName, BigDecimal.ZERO).add(amt)
+                    } else if (assigned.isNotEmpty()) {
+                        memberTotals[assigned] = memberTotals.getOrDefault(assigned, BigDecimal.ZERO).add(amt)
                     }
                 } else {
                     splits.add("${item.description}: ₹${formatIndian(amt)}")
@@ -67,8 +76,6 @@ class ExpenseViewModel(private val repository: ExpenseRepository) : ViewModel() 
 
             rawGrandTotal = total
             _totalAmount.value = "₹" + formatIndian(total)
-
-            _activeMembers.value = repository.getGroupMembers(sheetId)
 
             val newSummary = ArrayList<String>()
             for ((name, t) in catTotals) {
