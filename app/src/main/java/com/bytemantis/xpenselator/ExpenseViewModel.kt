@@ -1,4 +1,4 @@
-package com.example.xpenselator
+package com.bytemantis.xpenselator
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider

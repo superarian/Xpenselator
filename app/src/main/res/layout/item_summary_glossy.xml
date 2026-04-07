@@ -5,7 +5,7 @@
     android:orientation="vertical"
     android:padding="2dp">
 
-    <com.example.xpenselator.GlossyBarView
+    <bytemantis.xpenselator.GlossyBarView
         android:id="@+id/glossyBar"
         android:layout_width="match_parent"
         android:layout_height="50dp"/>

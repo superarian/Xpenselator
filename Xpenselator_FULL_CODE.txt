@@ -5,7 +5,7 @@ Date: 03/20/2026 16:44:37
 
 
 --- START OF FILE: AppDatabase.kt ---
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
@@ -19,7 +19,7 @@ abstract class AppDatabase : RoomDatabase() {
 
 
 --- START OF FILE: ExpenseDao.kt ---
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import androidx.room.Dao
 import androidx.room.Delete
@@ -48,7 +48,7 @@ interface ExpenseDao {
 
 
 --- START OF FILE: ExpenseEntity.kt ---
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -64,7 +64,7 @@ data class ExpenseEntity(
 
 
 --- START OF FILE: GlossyBarView.kt ---
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import android.animation.ValueAnimator
 import android.content.Context
@@ -158,7 +158,7 @@ class GlossyBarView @JvmOverloads constructor(
 
 
 --- START OF FILE: GlossyRender.kt ---
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import android.graphics.Canvas
 import android.graphics.Color
@@ -221,7 +221,7 @@ object GlossyRender {
 
 
 --- START OF FILE: MainActivity.kt ---
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import android.animation.ValueAnimator
 import android.content.Context
@@ -1325,7 +1325,7 @@ class MainActivity : AppCompatActivity() {
 
 
 --- START OF FILE: SplashActivity.kt ---
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import android.content.Intent
 import android.os.Bundle
@@ -1880,7 +1880,7 @@ class SplashActivity : AppCompatActivity() {
     android:orientation="vertical"
     android:padding="2dp">
 
-    <com.example.xpenselator.GlossyBarView
+    <bytemantis.xpenselator.GlossyBarView
         android:id="@+id/glossyBar"
         android:layout_width="match_parent"
         android:layout_height="50dp"/>
@@ -1912,7 +1912,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.xpenselator"
+    namespace = "bytemantis.xpenselator"
     compileSdk = 35
 
     defaultConfig {

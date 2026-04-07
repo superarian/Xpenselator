@@ -1,4 +1,4 @@
-package com.example.xpenselator
+package com.bytemantis.xpenselator
 
 import android.animation.ValueAnimator
 import android.content.Context

@@ -1,4 +1,4 @@
-package com.example.xpenselator
+package com.bytemantis.xpenselator
 
 import androidx.room.Database
 import androidx.room.RoomDatabase

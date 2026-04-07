@@ -1,4 +1,4 @@
-package com.example.xpenselator
+package com.bytemantis.xpenselator
 
 import org.junit.Test
 

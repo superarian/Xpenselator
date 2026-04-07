@@ -6,7 +6,7 @@ FILE: AppDatabase.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\AppDatabase.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
@@ -22,7 +22,7 @@ FILE: ExpenseDao.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\ExpenseDao.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import androidx.room.Dao
 import androidx.room.Delete
@@ -53,7 +53,7 @@ FILE: ExpenseEntity.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\ExpenseEntity.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -72,7 +72,7 @@ FILE: ExpenseRepository.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\ExpenseRepository.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -175,7 +175,7 @@ FILE: ExpenseViewModel.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\ExpenseViewModel.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -407,7 +407,7 @@ FILE: GlossyBarView.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\GlossyBarView.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import android.animation.ValueAnimator
 import android.content.Context
@@ -503,7 +503,7 @@ FILE: GlossyRender.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\GlossyRender.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import android.graphics.Canvas
 import android.graphics.Color
@@ -568,7 +568,7 @@ FILE: MainActivity.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\MainActivity.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import com.google.firebase.firestore.FirebaseFirestore
 import android.content.Context
@@ -2086,7 +2086,7 @@ FILE: SplashActivity.kt
 PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\java\com\example\xpenselator\SplashActivity.kt
 ################################################
 
-package com.example.xpenselator
+package bytemantis.xpenselator
 
 import android.content.Intent
 import android.os.Bundle
@@ -2839,7 +2839,7 @@ PATH: C:\Users\manoj\StudioProjects\Xpenselator\app\src\main\res\layout\item_sum
     android:orientation="vertical"
     android:padding="2dp">
 
-    <com.example.xpenselator.GlossyBarView
+    <bytemantis.xpenselator.GlossyBarView
         android:id="@+id/glossyBar"
         android:layout_width="match_parent"
         android:layout_height="50dp"/>

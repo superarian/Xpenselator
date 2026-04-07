@@ -19,3 +19,29 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# ==========================================
+# XpenseLator Security & Keep Rules
+# ==========================================
+
+# --- FIREBASE (THE CONTRACTOR) ---
+# Prevents the shredder from renaming Firebase communication lines
+-keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.** { *; }
+-keepnames class com.google.firebase.** { *; }
+
+# --- ROOM DATABASE (LOCAL STORAGE) ---
+# Ensures your offline expenses aren't corrupted when reading/writing
+-keep class * extends androidx.room.RoomDatabase
+-keep @androidx.room.Entity class *
+-keepclassmembers class * {
+    @androidx.room.Query *;
+    @androidx.room.Insert *;
+    @androidx.room.Delete *;
+    @androidx.room.Update *;
+}
+
+# --- KOTLIN COROUTINES ---
+# Keeps background tasks (like checking Firebase) from crashing
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}

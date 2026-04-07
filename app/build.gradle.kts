@@ -7,15 +7,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.xpenselator"
+    namespace = "com.bytemantis.xpenselator"
     compileSdk = 35
 
     defaultConfig {
         applicationId = "com.byteskull.xpenselator"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 4
+        versionName = "2.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
