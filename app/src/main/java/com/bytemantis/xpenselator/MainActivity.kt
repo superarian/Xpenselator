@@ -68,7 +68,7 @@ class MainActivity : AppCompatActivity() {
 
     private var currentSheetID = 1
     private var maxSheetID = 1
-    private var deviceRequestID = 0
+    private var deviceRequestID = ""
     private var currentToast: Toast? = null
 
     private lateinit var gestureDetector: GestureDetectorCompat
@@ -139,6 +139,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
         setContentView(R.layout.activity_main)
+        enableImmersiveMode()
 
         db = FirebaseFirestore.getInstance()
 
@@ -538,7 +539,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun verifyPaymentWithFirebase(dialog: AlertDialog) {
         showFastToast("Checking database...")
-        db.collection("PremiumUsers").document(deviceRequestID.toString())
+        db.collection("PremiumUsers").document(deviceRequestID)
             .get()
             .addOnSuccessListener { document ->
                 if (document != null && document.getBoolean("isPro") == true) {
@@ -553,7 +554,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncProStatusWithServer() {
-        if (deviceRequestID == 0 || deviceRequestID == 9999) return
+        if (deviceRequestID.isEmpty() || deviceRequestID == "unknown") return
         repository.syncProStatus(deviceRequestID) { isPro ->
             if (isPro != isProVersion) isProVersion = isPro
         }
@@ -982,51 +983,49 @@ class MainActivity : AppCompatActivity() {
         val idText = TextView(this)
         idText.text = "Device ID: $deviceRequestID"
         idText.setTextColor(Color.YELLOW)
-        idText.textSize = 18f
+        idText.textSize = 14f
         idText.typeface = Typeface.DEFAULT_BOLD
         idText.gravity = Gravity.CENTER
         layout.addView(idText)
 
         val instr = TextView(this)
-        instr.text = "\nTo Activate PRO Mode:\n1. Copy UPI ID below & Pay $PRO_PRICE.\n2. Send Screenshot + Device ID to Bot.\n3. Click Verify below once approved."
+        instr.text = "\nTo Activate PRO Mode:\n1. Tap PAY ₹99 to open your UPI app.\n2. Complete the payment.\n3. Enter the 12-digit UTR ID to unlock."
         instr.setTextColor(Color.LTGRAY)
         instr.textSize = 14f
         layout.addView(instr)
 
-        val upiBox = LinearLayout(this)
-        upiBox.orientation = LinearLayout.HORIZONTAL
-        upiBox.setPadding(0, 20, 0, 20)
-        upiBox.gravity = Gravity.CENTER_VERTICAL
-
-        val upiIdString = "paytmqr2810050501011e876976d7ua@paytm"
-        val upiText = TextView(this)
-        upiText.text = upiIdString
-        upiText.setTextColor(if (isDarkMode) Color.WHITE else Color.BLACK)
-        upiText.textSize = 12f
-        upiText.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        upiBox.addView(upiText)
-
-        val btnCopy = Button(this)
-        btnCopy.text = "COPY"
-        btnCopy.textSize = 12f
-        btnCopy.background.setTint(Color.DKGRAY)
-        btnCopy.setTextColor(Color.WHITE)
-        btnCopy.setOnClickListener {
+        val btnPay = Button(this)
+        btnPay.text = "⚡ PAY ₹99 VIA UPI"
+        btnPay.setBackgroundColor(Color.parseColor("#0088cc"))
+        btnPay.setTextColor(Color.WHITE)
+        val payParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        payParams.setMargins(0, 20, 0, 10)
+        btnPay.layoutParams = payParams
+        btnPay.setOnClickListener {
             performHaptic()
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            val clip = android.content.ClipData.newPlainText("UPI ID", upiIdString)
-            clipboard.setPrimaryClip(clip)
-            showFastToast("✅ UPI ID Copied!")
+            val upiIdString = "paytmqr2810050501011e876976d7ua@paytm"
+            val upiUri = Uri.parse("upi://pay?pa=$upiIdString&pn=Xpenselator&am=99&cu=INR&tn=Xpenselator%20PRO%20Upgrade")
+            val intent = Intent(Intent.ACTION_VIEW, upiUri)
+            try {
+                startActivityForResult(intent, 4321)
+            } catch (e: Exception) {
+                showFastToast("No UPI apps found on this device.")
+            }
         }
-        upiBox.addView(btnCopy)
-        layout.addView(upiBox)
+        layout.addView(btnPay)
 
-        val btnBuy = Button(this)
-        btnBuy.text = "🤖 OPEN TELEGRAM BOT"
-        btnBuy.setBackgroundColor(Color.parseColor("#0088cc"))
-        btnBuy.setTextColor(Color.WHITE)
-        btnBuy.setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PAYMENT_LINK))) }
-        layout.addView(btnBuy)
+        val btnManual = Button(this)
+        btnManual.text = "✍️ MANUALLY ENTER UTR"
+        btnManual.setBackgroundColor(Color.DKGRAY)
+        btnManual.setTextColor(Color.WHITE)
+        val manualParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        manualParams.setMargins(0, 10, 0, 10)
+        btnManual.layoutParams = manualParams
+        btnManual.setOnClickListener {
+            performHaptic()
+            showUtrInputDialog()
+        }
+        layout.addView(btnManual)
 
         val dialog = AlertDialog.Builder(this)
             .setView(layout)
@@ -1038,7 +1037,7 @@ class MainActivity : AppCompatActivity() {
         btnVerify.setBackgroundColor(Color.parseColor("#00AA00"))
         btnVerify.setTextColor(Color.WHITE)
         val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        params.setMargins(0, 20, 0, 0)
+        params.setMargins(0, 10, 0, 0)
         btnVerify.layoutParams = params
 
         btnVerify.setOnClickListener {
@@ -1050,6 +1049,85 @@ class MainActivity : AppCompatActivity() {
         dialog.apply {
             window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light)
             show()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 4321) {
+            AlertDialog.Builder(this)
+                .setTitle("Verify UPI Payment")
+                .setMessage("If your payment of ₹99 was successful, please enter your 12-digit UTR/UPI Ref ID to activate PRO features.")
+                .setPositiveButton("Submit UTR") { _, _ ->
+                    showUtrInputDialog()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun showUtrInputDialog() {
+        performHaptic()
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("Enter 12-Digit UTR ID")
+
+        val input = EditText(this)
+        input.inputType = InputType.TYPE_CLASS_NUMBER
+        input.hint = "e.g., 318294719283"
+        input.setPadding(50, 40, 50, 40)
+
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.MATCH_PARENT
+        )
+        input.layoutParams = lp
+        builder.setView(input)
+
+        builder.setPositiveButton("Submit") { dialog, _ ->
+            performHaptic()
+            val utr = input.text.toString().trim()
+            if (utr.length == 12 && utr.all { it.isDigit() }) {
+                submitUtrToPythonAnywhere(utr)
+                dialog.dismiss()
+            } else {
+                showFastToast("❌ Please enter a valid 12-digit UTR ID")
+            }
+        }
+        builder.setNegativeButton("Cancel") { dialog, _ ->
+            dialog.cancel()
+        }
+        builder.show()
+    }
+
+    private fun submitUtrToPythonAnywhere(utr: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val url = java.net.URL("https://bytemantis.pythonanywhere.com/submit-utr")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json; utf-8")
+                conn.setRequestProperty("Accept", "application/json")
+                conn.doOutput = true
+
+                val jsonInputString = "{\"deviceId\": \"$deviceRequestID\", \"utrId\": \"$utr\"}"
+                conn.outputStream.use { os ->
+                    val input = jsonInputString.toByteArray(charset("utf-8"))
+                    os.write(input, 0, input.size)
+                }
+
+                val code = conn.responseCode
+                withContext(Dispatchers.Main) {
+                    if (code == 200) {
+                        showFastToast("✅ UTR Submitted! Check Telegram approval status.")
+                    } else {
+                        showFastToast("❌ Submission failed. Code: $code")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showFastToast("Error: ${e.message}")
+                }
+            }
         }
     }
 
@@ -1784,5 +1862,48 @@ class MainActivity : AppCompatActivity() {
         titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER;
         AlertDialog.Builder(this).setCustomTitle(titleView).setView(input).setPositiveButton("SAVE") { _, _ -> val n = input.text.toString().trim(); if (n.isNotEmpty()) { getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit().putString("NAME_$currentSheetID", n).apply(); projectName.text = n;
             showFastToast("Renamed to $n") } }.setNegativeButton("Cancel", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        enableImmersiveMode()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            enableImmersiveMode()
+        }
+    }
+
+    private fun enableImmersiveMode() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val decorView = window.peekDecorView()
+            if (decorView != null) {
+                window.setDecorFitsSystemWindows(false)
+                val controller = window.insetsController
+                if (controller != null) {
+                    controller.hide(android.view.WindowInsets.Type.statusBars() or android.view.WindowInsets.Type.navigationBars())
+                    controller.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            } else {
+                window.decorView.post {
+                    window.setDecorFitsSystemWindows(false)
+                    val controller = window.insetsController
+                    if (controller != null) {
+                        controller.hide(android.view.WindowInsets.Type.statusBars() or android.view.WindowInsets.Type.navigationBars())
+                        controller.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    }
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN)
+        }
     }
 }

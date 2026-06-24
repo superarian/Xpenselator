@@ -70,18 +70,16 @@ class ExpenseRepository(
         prefs.edit().putBoolean("LOCKED_$sheetId", locked).apply()
     }
 
-    fun getHardwareID(): Int {
+    fun getHardwareID(): String {
         return try {
-            val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "random"
-            val hash = abs(androidId.hashCode())
-            (hash % 9000) + 1000
+            Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown"
         } catch (e: Exception) {
-            9999
+            "unknown"
         }
     }
 
-    fun syncProStatus(deviceId: Int, onResult: (Boolean) -> Unit) {
-        db.collection("PremiumUsers").document(deviceId.toString())
+    fun syncProStatus(deviceId: String, onResult: (Boolean) -> Unit) {
+        db.collection("PremiumUsers").document(deviceId)
             .get()
             .addOnSuccessListener { document ->
                 val serverIsPro = document != null && document.getBoolean("isPro") == true

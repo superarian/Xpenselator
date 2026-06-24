@@ -4,15 +4,15 @@
     "type": "APK",
     "kind": "Directory"
   },
-  "applicationId": "com.bytemantis.xpenselator",
+  "applicationId": "com.byteskull.xpenselator",
   "variantName": "release",
   "elements": [
     {
       "type": "SINGLE",
       "filters": [],
       "attributes": [],
-      "versionCode": 3,
-      "versionName": "1.1",
+      "versionCode": 4,
+      "versionName": "2.8",
       "outputFile": "app-release.apk"
     }
   ],
