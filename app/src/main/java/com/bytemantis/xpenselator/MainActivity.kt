@@ -49,9 +49,13 @@ import java.text.DecimalFormat
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.abs
+import com.razorpay.Checkout
+import com.razorpay.PaymentResultListener
+import org.json.JSONObject
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), PaymentResultListener {
 
+    private val RAZORPAY_KEY_ID = "rzp_live_T7mvtNbJnjqePj" // Replace with your actual Live Key ID from Razorpay Dashboard
     private var isProVersion = false
     private val PRO_PRICE = "₹99"
     private val FREE_SHEET_LIMIT = 3
@@ -141,6 +145,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         enableImmersiveMode()
 
+        Checkout.preload(applicationContext)
         db = FirebaseFirestore.getInstance()
 
         val MIGRATION_2_3 = object : Migration(2, 3) {
@@ -965,6 +970,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var activeUpsellDialog: AlertDialog? = null
+
     private fun showUpsellDialog() {
         performHaptic()
         val layout = LinearLayout(this)
@@ -989,13 +996,13 @@ class MainActivity : AppCompatActivity() {
         layout.addView(idText)
 
         val instr = TextView(this)
-        instr.text = "\nTo Activate PRO Mode:\n1. Tap PAY ₹99 to open your UPI app.\n2. Complete the payment.\n3. Enter the 12-digit UTR ID to unlock."
+        instr.text = "\nTo Activate PRO Mode:\n1. Tap PAY ₹99 to open Razorpay.\n2. Complete the payment via UPI, Card, NetBanking, or Wallet.\n3. The app will unlock automatically."
         instr.setTextColor(Color.LTGRAY)
         instr.textSize = 14f
         layout.addView(instr)
 
         val btnPay = Button(this)
-        btnPay.text = "⚡ PAY ₹99 VIA UPI"
+        btnPay.text = "⚡ PAY ₹99 WITH RAZORPAY"
         btnPay.setBackgroundColor(Color.parseColor("#0088cc"))
         btnPay.setTextColor(Color.WHITE)
         val payParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -1003,37 +1010,19 @@ class MainActivity : AppCompatActivity() {
         btnPay.layoutParams = payParams
         btnPay.setOnClickListener {
             performHaptic()
-            val upiIdString = "paytmqr2810050501011e876976d7ua@paytm"
-            val upiUri = Uri.parse("upi://pay?pa=$upiIdString&pn=Xpenselator&am=99&cu=INR&tn=Xpenselator%20PRO%20Upgrade")
-            val intent = Intent(Intent.ACTION_VIEW, upiUri)
-            try {
-                startActivityForResult(intent, 4321)
-            } catch (e: Exception) {
-                showFastToast("No UPI apps found on this device.")
-            }
+            startRazorpayPayment()
         }
         layout.addView(btnPay)
-
-        val btnManual = Button(this)
-        btnManual.text = "✍️ MANUALLY ENTER UTR"
-        btnManual.setBackgroundColor(Color.DKGRAY)
-        btnManual.setTextColor(Color.WHITE)
-        val manualParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        manualParams.setMargins(0, 10, 0, 10)
-        btnManual.layoutParams = manualParams
-        btnManual.setOnClickListener {
-            performHaptic()
-            showUtrInputDialog()
-        }
-        layout.addView(btnManual)
 
         val dialog = AlertDialog.Builder(this)
             .setView(layout)
             .setNegativeButton("Cancel", null)
             .create()
 
+        activeUpsellDialog = dialog
+
         val btnVerify = Button(this)
-        btnVerify.text = "VERIFY PAYMENT"
+        btnVerify.text = "🔄 RE-VERIFY STATUS"
         btnVerify.setBackgroundColor(Color.parseColor("#00AA00"))
         btnVerify.setTextColor(Color.WHITE)
         val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -1052,83 +1041,62 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 4321) {
-            AlertDialog.Builder(this)
-                .setTitle("Verify UPI Payment")
-                .setMessage("If your payment of ₹99 was successful, please enter your 12-digit UTR/UPI Ref ID to activate PRO features.")
-                .setPositiveButton("Submit UTR") { _, _ ->
-                    showUtrInputDialog()
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
+    private fun startRazorpayPayment() {
+        val co = Checkout()
+        if (RAZORPAY_KEY_ID == "rzp_live_xxxxxxxxxxxxxx") {
+            showFastToast("Please configure your Razorpay Key ID in MainActivity.kt")
+            return
+        }
+        co.setKeyID(RAZORPAY_KEY_ID)
+        try {
+            val options = JSONObject()
+            options.put("name", "Xpenselator")
+            options.put("description", "PRO Version Upgrade")
+            options.put("image", "https://s3.amazonaws.com/rzp-mobile/images/rzp.png")
+            options.put("theme.color", "#0088cc")
+            options.put("currency", "INR")
+            options.put("amount", "9900") // ₹99.00 in paise
+            
+            val prefill = JSONObject()
+            prefill.put("email", "payments@xpenselator.com")
+            prefill.put("contact", "")
+            options.put("prefill", prefill)
+
+            val retryObj = JSONObject()
+            retryObj.put("enabled", true)
+            retryObj.put("max_count", 4)
+            options.put("retry", retryObj)
+
+            co.open(this, options)
+        } catch (e: Exception) {
+            showFastToast("Error launching Razorpay: ${e.message}")
         }
     }
 
-    private fun showUtrInputDialog() {
-        performHaptic()
-        val builder = AlertDialog.Builder(this)
-        builder.setTitle("Enter 12-Digit UTR ID")
-
-        val input = EditText(this)
-        input.inputType = InputType.TYPE_CLASS_NUMBER
-        input.hint = "e.g., 318294719283"
-        input.setPadding(50, 40, 50, 40)
-
-        val lp = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.MATCH_PARENT
-        )
-        input.layoutParams = lp
-        builder.setView(input)
-
-        builder.setPositiveButton("Submit") { dialog, _ ->
-            performHaptic()
-            val utr = input.text.toString().trim()
-            if (utr.length == 12 && utr.all { it.isDigit() }) {
-                submitUtrToPythonAnywhere(utr)
-                dialog.dismiss()
-            } else {
-                showFastToast("❌ Please enter a valid 12-digit UTR ID")
+    override fun onPaymentSuccess(razorpayPaymentId: String?) {
+        showFastToast("✅ Payment Successful! Activating Pro...")
+        db.collection("PremiumUsers").document(deviceRequestID)
+            .set(mapOf("isPro" to true, "paymentId" to (razorpayPaymentId ?: "")))
+            .addOnSuccessListener {
+                isProVersion = true
+                getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+                    .edit().putBoolean("IS_PRO", true).apply()
+                saveGlobalSettings()
+                showFastToast("🎉 PRO UNLOCKED!")
+                activeUpsellDialog?.dismiss()
             }
-        }
-        builder.setNegativeButton("Cancel") { dialog, _ ->
-            dialog.cancel()
-        }
-        builder.show()
+            .addOnFailureListener { e ->
+                isProVersion = true
+                getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE)
+                    .edit().putBoolean("IS_PRO", true).apply()
+                saveGlobalSettings()
+                showFastToast("🎉 PRO Unlocked! (Offline Sync Pending)")
+                activeUpsellDialog?.dismiss()
+            }
     }
 
-    private fun submitUtrToPythonAnywhere(utr: String) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val url = java.net.URL("https://bytemantis.pythonanywhere.com/submit-utr")
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json; utf-8")
-                conn.setRequestProperty("Accept", "application/json")
-                conn.doOutput = true
-
-                val jsonInputString = "{\"deviceId\": \"$deviceRequestID\", \"utrId\": \"$utr\"}"
-                conn.outputStream.use { os ->
-                    val input = jsonInputString.toByteArray(charset("utf-8"))
-                    os.write(input, 0, input.size)
-                }
-
-                val code = conn.responseCode
-                withContext(Dispatchers.Main) {
-                    if (code == 200) {
-                        showFastToast("✅ UTR Submitted! Check Telegram approval status.")
-                    } else {
-                        showFastToast("❌ Submission failed. Code: $code")
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    showFastToast("Error: ${e.message}")
-                }
-            }
-        }
+    override fun onPaymentError(code: Int, response: String?) {
+        showFastToast("❌ Payment Failed: $response")
     }
 
     private fun deleteCurrentSheet() { if (maxSheetID <= 1) { showFastToast("Cannot delete only sheet!"); return }; performHaptic(); AlertDialog.Builder(this).setTitle("Delete Sheet?").setMessage("Are you sure?").setPositiveButton("DELETE") { _, _ -> performDeleteSheetLogic() }.setNegativeButton("Cancel", null).show() }

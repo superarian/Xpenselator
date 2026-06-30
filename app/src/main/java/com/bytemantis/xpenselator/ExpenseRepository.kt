@@ -83,10 +83,13 @@ class ExpenseRepository(
             .get()
             .addOnSuccessListener { document ->
                 val serverIsPro = document != null && document.getBoolean("isPro") == true
-                if (isProVersion() != serverIsPro) {
-                    setProVersion(serverIsPro)
+                if (serverIsPro) {
+                    setProVersion(true)
+                    onResult(true)
+                } else {
+                    // Keep local status if server doesn't have Pro record
+                    onResult(isProVersion())
                 }
-                onResult(serverIsPro)
             }
             .addOnFailureListener {
                 onResult(isProVersion())

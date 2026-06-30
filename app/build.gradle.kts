@@ -64,4 +64,7 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+
+    // Razorpay Standard SDK
+    implementation(libs.razorpay.checkout)
 }
