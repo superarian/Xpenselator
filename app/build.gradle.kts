@@ -14,8 +14,8 @@ android {
         applicationId = "com.byteskull.xpenselator"
         minSdk = 24
         targetSdk = 35
-        versionCode = 6
-        versionName = "3"
+        versionCode = 7
+        versionName = "3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

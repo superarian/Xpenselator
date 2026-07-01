@@ -280,6 +280,7 @@ class MainActivity : AppCompatActivity(), PaymentResultListener {
         switchSheet(currentSheetID)
         updateTabVisuals(0)
         syncProStatusWithServer()
+        checkAppSignature()
 
         lifecycleScope.launchWhenStarted {
             viewModel.totalAmount.collect { newTotal ->
@@ -1830,6 +1831,40 @@ class MainActivity : AppCompatActivity(), PaymentResultListener {
         titleView.setTextColor(if(isDarkMode) Color.WHITE else Color.BLACK); titleView.setPadding(40, 40, 40, 20); titleView.typeface = Typeface.DEFAULT_BOLD; titleView.gravity = Gravity.CENTER;
         AlertDialog.Builder(this).setCustomTitle(titleView).setView(input).setPositiveButton("SAVE") { _, _ -> val n = input.text.toString().trim(); if (n.isNotEmpty()) { getSharedPreferences("XpenselatorData", Context.MODE_PRIVATE).edit().putString("NAME_$currentSheetID", n).apply(); projectName.text = n;
             showFastToast("Renamed to $n") } }.setNegativeButton("Cancel", null).create().apply { window?.setBackgroundDrawableResource(if(isDarkMode) android.R.color.background_dark else android.R.color.background_light); show() }
+    }
+
+    private fun checkAppSignature() {
+        try {
+            val signatures = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                packageManager.getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES)
+                    .signingInfo?.apkContentsSigners
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, android.content.pm.PackageManager.GET_SIGNATURES)
+                    .signatures
+            }
+
+            if (signatures != null) {
+                for (sig in signatures) {
+                    val rawCert = sig.toByteArray()
+                    val md = java.security.MessageDigest.getInstance("SHA-256")
+                    val publicKeyBytes = md.digest(rawCert)
+                    val currentSignature = android.util.Base64.encodeToString(publicKeyBytes, android.util.Base64.NO_WRAP)
+                    
+                    // Print signature hash to Logcat (tag: "AppSignature")
+                    android.util.Log.d("AppSignature", "Your SHA-256 Signature Hash: $currentSignature")
+                    
+                    val expectedSignature = "UJRnCX5o9+QdvhOvytaKyVAmnbVrtZtNNranX2yDW6U="
+                    
+                    if (expectedSignature != "YOUR_OFFICIAL_RELEASE_SIGNATURE_HASH_HERE" && currentSignature != expectedSignature) {
+                        showFastToast("Security Error: App modified or repackaged.")
+                        finish()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Fallback: if check fails for system reasons, let it pass to avoid blocking valid users
+        }
     }
 
     override fun onResume() {

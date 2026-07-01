@@ -45,3 +45,13 @@
 # Keeps background tasks (like checking Firebase) from crashing
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+
+# --- RAZORPAY PAYMENT GATEWAY ---
+# Prevents R8 from stripping Razorpay class definitions, callbacks, or annotations
+-keep class com.razorpay.** { *; }
+-dontwarn com.razorpay.**
+-keepattributes *Annotation*,Signature,InnerClasses
+
+# --- R8 / PROGUARD MISSING RULES ---
+-dontwarn proguard.annotation.Keep
+-dontwarn proguard.annotation.KeepClassMembers
