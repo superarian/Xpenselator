@@ -1857,8 +1857,9 @@ class MainActivity : AppCompatActivity(), PaymentResultListener {
                     val expectedSignature = "UJRnCX5o9+QdvhOvytaKyVAmnbVrtZtNNranX2yDW6U="
                     
                     if (expectedSignature != "YOUR_OFFICIAL_RELEASE_SIGNATURE_HASH_HERE" && currentSignature != expectedSignature) {
-                        showFastToast("Security Error: App modified or repackaged.")
-                        finish()
+                        android.util.Log.e("AppSignature", "Security Alert: Signature mismatch detected! Disabling Pro features.")
+                        isProVersion = false
+                        saveGlobalSettings()
                     }
                 }
             }
